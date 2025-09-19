@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Status Dashboard</h2>
+<table>
+    <tr>
+        <th>Username</th>
+        <th>Users Scraped</th>
+        <th>DMs Sent</th>
+        <th>Status</th>
+    </tr>
+    {% for account in accounts %}
+    <tr>
+        <td>{{ account.username }}</td>
+        <td>{{ account.scraped_users.count }}</td>
+        <td>{{ account.dms_sent }}</td>
+        <td>{{ account.status }}</td>
+    </tr>
+    {% endfor %}
+</table>
+<h2>Recent Alerts</h2>
+<ul>
+    {% for alert in alerts %}
+    <li>{{ alert.message }} ({{ alert.timestamp }})</li>
+    {% endfor %}
+</ul>
+{% endblock %}

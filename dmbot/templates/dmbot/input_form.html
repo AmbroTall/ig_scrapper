@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Start Bot</h2>
+<form method="post">
+    {% csrf_token %}
+    <label>Hashtags (comma-separated): <input type="text" name="hashtags"></label><br>
+    <label>Locations (comma-separated): <input type="text" name="locations"></label><br>
+    <label>Followers (usernames, comma-separated): <input type="text" name="followers"></label><br>
+    <label>Following (usernames, comma-separated): <input type="text" name="following"></label><br>
+    <label>Likes (post URLs, comma-separated): <input type="text" name="likes"></label><br>
+    <label>Comments (post URLs, comma-separated): <input type="text" name="comments"></label><br>
+    <label>Tags (usernames, comma-separated): <input type="text" name="tags"></label><br>
+    <label>Professions (comma-separated): <input type="text" name="professions"></label><br>
+    <label>Countries (comma-separated): <input type="text" name="countries"></label><br>
+    <label>Keywords (comma-separated): <input type="text" name="keywords"></label><br>
+    <button type="submit">Start Scraping</button>
+</form>
+{% endblock %}
