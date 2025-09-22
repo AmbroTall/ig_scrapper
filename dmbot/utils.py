@@ -1,5 +1,3 @@
-## 3. Enhanced Utils (utils.py)
-
 import logging
 import os
 import random
@@ -13,34 +11,23 @@ from .models import Alert
 from instagrapi.mixins.challenge import ChallengeChoice
 
 def get_code_from_sms(username):
-    # In production, you don’t want input() here – you’d fetch from Twilio, etc.
-    while True:
-        code = input(f"Enter code (6 digits) for {username}: ").strip()
-        if code and code.isdigit():
-            return code
+    # Placeholder: Not used since challenges stop scraping
     return None
 
 def get_code_from_email(username):
-    # Example Gmail IMAP fetch, simplified
-    # You’ll replace this with your email API
-    return "123456"
+    # Placeholder: Not used since challenges stop scraping
+    return None
 
 def challenge_code_handler(username, choice):
-    if choice == ChallengeChoice.SMS:
-        return get_code_from_sms(username)
-    elif choice == ChallengeChoice.EMAIL:
-        return get_code_from_email(username)
+    # Placeholder: Not used since challenges stop scraping
     return False
 
 def change_password_handler(username):
-    # Generate a new random password if Instagram forces reset
-    import random
-    chars = list("abcdefghijklmnopqrstuvwxyz1234567890!&£@#")
-    return "".join(random.sample(chars, 10))
-
+    # Placeholder: Not used since challenges stop scraping
+    return None
 
 def setup_client(account, retry_count=3):
-    """Enhanced client setup with better session management"""
+    """Enhanced client setup with better session management for 2000+ accounts"""
     logger = logging.getLogger(__name__)
 
     for attempt in range(retry_count):
@@ -55,6 +42,8 @@ def setup_client(account, retry_count=3):
 
             # Validate credentials
             if not _validate_credentials(account):
+                logger.error(f"Invalid credentials for {account.username}")
+                send_alert(f"Invalid credentials for {account.username}", 'error', account)
                 return None
 
             cl = Client()
@@ -77,13 +66,11 @@ def setup_client(account, retry_count=3):
                 account.update_health_score(False, 'login')
 
         except Exception as e:
-            print("Error",e)
             logger.error(f"Setup attempt {attempt + 1} failed for {account.username}: {e}")
             if attempt == retry_count - 1:
                 send_alert(f"Client setup failed for {account.username}: {str(e)}", 'error', account)
 
     return None
-
 
 def _validate_credentials(account):
     """Validate account credentials format"""
@@ -95,10 +82,9 @@ def _validate_credentials(account):
         return False
     return True
 
-
 def _configure_client(cl, account):
     """Configure client with device settings"""
-    cl.delay_range = getattr(settings, 'DELAY_RANGE', [1, 3])
+    cl.delay_range = getattr(settings, 'DELAY_RANGE', [2, 5])  # Increased for safety
 
     # Use stored device settings or generate new ones
     if account.device_settings:
@@ -126,15 +112,19 @@ def _configure_client(cl, account):
     ]
     cl.set_user_agent(random.choice(user_agents))
 
-
 def _load_session(cl, account):
-    """Load existing session if valid"""
+    """Load existing session if valid, stop on ChallengeRequired"""
     session_file = f"sessions/{account.username}.json"
 
     if not os.path.exists(session_file):
         return False
 
     try:
+        # Ensure session file is accessible
+        if not os.access(session_file, os.R_OK | os.W_OK):
+            logging.error(f"Session file {session_file} is not accessible")
+            return False
+
         # Load session
         session = cl.load_settings(session_file)
         if not session:
@@ -143,39 +133,28 @@ def _load_session(cl, account):
         cl.set_settings(session)
         cl.login(account.username, account.password)
 
-        # Validate session by hitting timeline
-        try:
-            cl.get_timeline_feed()
-            cl.dump_settings(session_file)
-            return True
-
-        except LoginRequired:
-            logging.info(f"Session invalid for {account.username}, retrying with password")
-
-            old_session = cl.get_settings()
-            cl.set_settings({})
-            if "uuids" in old_session:
-                cl.set_uuids(old_session["uuids"])
-
-            cl.login(account.username, account.password)
-            cl.dump_settings(session_file)
-            return True
+        # Validate session
+        cl.get_timeline_feed()
+        cl.dump_settings(session_file)
+        return True
 
     except ChallengeRequired as ce:
         logging.warning(f"Challenge required for {account.username}: {ce}")
+        account.status = "flagged"
+        account.save()
+        send_alert(f"Challenge required for {account.username}, stopping scraping", 'error', account)
+        return False
 
-        # Try to trigger challenge handler
-        try:
-            cl.challenge_code_handler = challenge_code_handler
-            cl.change_password_handler = change_password_handler
-
-            cl.login(account.username, account.password)
+    except LoginRequired:
+        logging.info(f"Session invalid for {account.username}, retrying")
+        old_session = cl.get_settings()
+        cl.set_settings({})
+        if "uuids" in old_session:
+            cl.set_uuids(old_session["uuids"])
+        if _perform_login(cl, account):
             cl.dump_settings(session_file)
-            logging.info(f"Challenge solved and session saved for {account.username}")
             return True
-        except Exception as e:
-            logging.error(f"Challenge handling failed for {account.username}: {e}")
-            return False
+        return False
 
     except Exception as e:
         logging.warning(f"Couldn't load session for {account.username}: {e}")
@@ -184,13 +163,8 @@ def _load_session(cl, account):
 def _validate_session(cl, account):
     """Validate if session is still working"""
     try:
-        # Try a simple API call to confirm session is valid
-        try:
-            cl.get_timeline_feed()
-            return True
-        except LoginRequired:
-            logging.info(f"Session invalid for {account.username}")
-            return False
+        cl.get_timeline_feed()
+        return True
     except Exception as e:
         logging.warning(f"Session validation error for {account.username}: {e}")
         return False
@@ -205,11 +179,10 @@ def _perform_login(cl, account):
         if cl.login(account.username, account.password):
             login_success = True
     except Exception as e:
-        logger.error(f"Couldn't login {account.username} using username/password: {e}")
+        logger.error(f"Couldn't login {account.username}: {e}")
         login_success = False
 
     if login_success:
-        # Update login tracking
         account.last_login = timezone.now()
         account.login_failures = 0
         account.last_login_failure = None
@@ -229,24 +202,19 @@ def _save_session(cl, account):
         os.makedirs("sessions", exist_ok=True)
         session_file = f"sessions/{account.username}.json"
         cl.dump_settings(session_file)
-
         account.session_data = cl.get_settings()
         account.save()
     except Exception as e:
         logging.error(f"Failed to save session for {account.username}: {e}")
-
+        send_alert(f"Failed to save session for {account.username}: {str(e)}", 'error', account)
 
 def send_alert(message, severity='info', account=None):
     """Enhanced alert system with severity levels"""
-    from .models import Alert
-
     Alert.objects.create(
         message=message,
         severity=severity,
         account=account
     )
-
-    # Log based on severity
     logger = logging.getLogger(__name__)
     if severity == 'critical':
         logger.critical(f"CRITICAL ALERT: {message}")
@@ -256,3 +224,5 @@ def send_alert(message, severity='info', account=None):
         logger.warning(f"WARNING ALERT: {message}")
     else:
         logger.info(f"INFO ALERT: {message}")
+
+
