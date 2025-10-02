@@ -3,3 +3,6 @@ __pycache__
 sessions
 celerybeat-schedule
 db.sqlite3
+app:
+results:
+transport:

@@ -32,8 +32,6 @@ class InputFormView(LoginRequiredMixin, View):
             if not accounts:
                 messages.error(request, "No healthy accounts available for scraping.")
                 return render(request, 'dmbot/input_form.html')
-
-
             scrape_users_task.delay(accounts[0].id, "hashtag", hashtags[0])
             # Schedule scraping tasks with randomized delays
             for account in accounts[1:]:

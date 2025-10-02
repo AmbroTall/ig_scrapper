@@ -26,6 +26,7 @@ def scrape_users_task(account_id, source_type, source_id, amount=None):
         # expand_users_task.delay(account.id)
         logging.info(f"Scraping task completed for {account.username}: {len(usernames)} users")
     except Exception as e:
+        print("Ngori",e)
         logging.error(f"Scraping task failed for account {account_id}: {e}")
         if account:
             account.status = "error"

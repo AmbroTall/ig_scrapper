@@ -156,18 +156,14 @@ DM_PERSONALIZATION_AI = True
 CELERY_BEAT_SCHEDULE = {
     'health-check': {
         'task': 'dmbot.tasks.health_check_task',
-        'schedule': 300.0,  # Every 5 minutes
-    },
-    'scrape-users-daily': {
-        'task': 'dmbot.tasks.scrape_users_task',
-        'schedule': 3600.0,
+        'schedule': crontab(hour='0,5,10,15,20', minute=0),
     },
     'warmup-accounts': {
         'task': 'dmbot.tasks.warmup_accounts_task',
-        'schedule': 3600.0,  # Every hour
+        'schedule': crontab(hour='0,12', minute=0),  # Runs at 00:00 and 12:00
     },
     'classify-users': {
         'task': 'dmbot.tasks.classify_users_task',
-        'schedule': 3600.0,  # Every hour
+        'schedule': 3600,  # Runs at 06:00 and 18:00
     },
 }
