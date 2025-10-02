@@ -32,12 +32,12 @@
                 <label for="csv_file" class="block text-sm font-medium text-gray-700 mb-2">
                     Select CSV File
                 </label>
-                <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary transition-colors">
+                <div id="dropzone" class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary transition-colors">
                     <div class="space-y-2 text-center">
                         <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
                             <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
-                        <div class="flex text-sm text-gray-600">
+                        <div class="flex text-sm text-gray-600 justify-center">
                             <label for="csv_file" class="relative cursor-pointer bg-white rounded-md font-medium text-primary hover:text-indigo-700 focus-within:outline-none">
                                 <span>Upload a file</span>
                                 <input id="csv_file" name="csv_file" type="file" accept=".csv" class="sr-only" required>
@@ -45,6 +45,26 @@
                             <p class="pl-1">or drag and drop</p>
                         </div>
                         <p class="text-xs text-gray-500">CSV files only</p>
+                    </div>
+                </div>
+
+                <!-- File Selected Indicator -->
+                <div id="file-info" class="hidden mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <svg class="h-5 w-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <div>
+                                <p class="text-sm font-medium text-green-900">File selected:</p>
+                                <p id="file-name" class="text-sm text-green-700"></p>
+                            </div>
+                        </div>
+                        <button type="button" id="remove-file" class="text-green-600 hover:text-green-800">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -73,4 +93,56 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('csv_file');
+    const fileInfo = document.getElementById('file-info');
+    const fileName = document.getElementById('file-name');
+    const removeFileBtn = document.getElementById('remove-file');
+    const dropzone = document.getElementById('dropzone');
+
+    // Handle file selection
+    fileInput.addEventListener('change', function(e) {
+        if (this.files && this.files[0]) {
+            const file = this.files[0];
+            fileName.textContent = file.name;
+            fileInfo.classList.remove('hidden');
+            dropzone.classList.add('border-green-500', 'bg-green-50');
+        }
+    });
+
+    // Handle file removal
+    removeFileBtn.addEventListener('click', function() {
+        fileInput.value = '';
+        fileInfo.classList.add('hidden');
+        dropzone.classList.remove('border-green-500', 'bg-green-50');
+    });
+
+    // Drag and drop functionality
+    dropzone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.classList.add('border-primary', 'bg-indigo-50');
+    });
+
+    dropzone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        this.classList.remove('border-primary', 'bg-indigo-50');
+    });
+
+    dropzone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('border-primary', 'bg-indigo-50');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0 && files[0].name.endsWith('.csv')) {
+            fileInput.files = files;
+            fileName.textContent = files[0].name;
+            fileInfo.classList.remove('hidden');
+            this.classList.add('border-green-500', 'bg-green-50');
+        }
+    });
+});
+</script>
+
 {% endblock %}

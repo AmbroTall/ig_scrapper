@@ -23,7 +23,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-gray-600">Active Accounts</p>
-                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ accounts|length }}</p>
+                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ accounts.paginator.count }}</p>
                 </div>
                 <div class="bg-indigo-100 rounded-lg p-3">
                     <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -36,7 +36,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-gray-600">Active Campaigns</p>
-                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ campaigns|length }}</p>
+                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ campaigns.paginator.count }}</p>
                 </div>
                 <div class="bg-purple-100 rounded-lg p-3">
                     <svg class="w-6 h-6 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -147,7 +147,30 @@
     <!-- Accounts Table -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">Instagram Accounts</h2>
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-lg font-semibold text-gray-900">Instagram Accounts</h2>
+            </div>
+            <!-- Account Search -->
+            <form method="get" class="flex gap-2">
+                {% if campaign_search %}<input type="hidden" name="campaign_search" value="{{ campaign_search }}">{% endif %}
+                {% if campaigns.number != 1 %}<input type="hidden" name="campaigns_page" value="{{ campaigns.number }}">{% endif %}
+                <div class="flex-1 relative">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input type="text" name="account_search" value="{{ account_search }}" placeholder="Search accounts by username or status..." class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary text-sm">
+                </div>
+                <button type="submit" class="px-3 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm">
+                    Search
+                </button>
+                {% if account_search %}
+                <a href="?{% if campaign_search %}campaign_search={{ campaign_search }}{% endif %}{% if campaigns.number != 1 %}{% if campaign_search %}&{% endif %}campaigns_page={{ campaigns.number }}{% endif %}" class="px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm">
+                    Clear
+                </a>
+                {% endif %}
+            </form>
         </div>
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -195,6 +218,50 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- Accounts Pagination -->
+        {% if accounts.paginator.num_pages > 1 %}
+        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    Page <span class="font-semibold">{{ accounts.number }}</span> of <span class="font-semibold">{{ accounts.paginator.num_pages }}</span>
+                </div>
+                <nav class="flex items-center space-x-2">
+                    {% if accounts.has_previous %}
+                    <a href="?accounts_page=1{% if account_search %}&account_search={{ account_search }}{% endif %}{% if campaigns.number %}&campaigns_page={{ campaigns.number }}{% endif %}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        First
+                    </a>
+                    <a href="?accounts_page={{ accounts.previous_page_number }}{% if account_search %}&account_search={{ account_search }}{% endif %}{% if campaigns.number %}&campaigns_page={{ campaigns.number }}{% endif %}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Previous
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        First
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Previous
+                    </span>
+                    {% endif %}
+
+                    {% if accounts.has_next %}
+                    <a href="?accounts_page={{ accounts.next_page_number }}{% if account_search %}&account_search={{ account_search }}{% endif %}{% if campaigns.number %}&campaigns_page={{ campaigns.number }}{% endif %}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Next
+                    </a>
+                    <a href="?accounts_page={{ accounts.paginator.num_pages }}{% if account_search %}&account_search={{ account_search }}{% endif %}{% if campaigns.number %}&campaigns_page={{ campaigns.number }}{% endif %}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Last
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Next
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Last
+                    </span>
+                    {% endif %}
+                </nav>
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Active Campaigns -->
@@ -236,6 +303,50 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- Campaigns Pagination -->
+        {% if campaigns.paginator.num_pages > 1 %}
+        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    Page <span class="font-semibold">{{ campaigns.number }}</span> of <span class="font-semibold">{{ campaigns.paginator.num_pages }}</span>
+                </div>
+                <nav class="flex items-center space-x-2">
+                    {% if campaigns.has_previous %}
+                    <a href="?campaigns_page=1{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}{% if accounts.number %}&accounts_page={{ accounts.number }}{% endif %}{% if account_search %}&account_search={{ account_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        First
+                    </a>
+                    <a href="?campaigns_page={{ campaigns.previous_page_number }}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}{% if accounts.number %}&accounts_page={{ accounts.number }}{% endif %}{% if account_search %}&account_search={{ account_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Previous
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        First
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Previous
+                    </span>
+                    {% endif %}
+
+                    {% if campaigns.has_next %}
+                    <a href="?campaigns_page={{ campaigns.next_page_number }}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}{% if accounts.number %}&accounts_page={{ accounts.number }}{% endif %}{% if account_search %}&account_search={{ account_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Next
+                    </a>
+                    <a href="?campaigns_page={{ campaigns.paginator.num_pages }}{% if campaign_search %}&campaign_search={{ campaign_search }}{% endif %}{% if accounts.number %}&accounts_page={{ accounts.number }}{% endif %}{% if account_search %}&account_search={{ account_search }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Last
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Next
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Last
+                    </span>
+                    {% endif %}
+                </nav>
+            </div>
+        </div>
+        {% endif %}
         {% else %}
         <div class="px-6 py-8 text-center">
             <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

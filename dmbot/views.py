@@ -1,4 +1,5 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 from django.db.models import Q
 from django.shortcuts import render, redirect
 from django.contrib import messages
@@ -57,24 +58,68 @@ class InputFormView(LoginRequiredMixin, View):
             messages.error(request, f"Error scheduling tasks: {str(e)}")
             return render(request, 'dmbot/input_form.html')
 
+
 class StatusView(LoginRequiredMixin, View):
     def get(self, request):
-        accounts = Account.objects.select_related().all()
-        alerts = Alert.objects.order_by('-timestamp')[:10]
+        # Get search queries
+        account_search = request.GET.get('account_search', '').strip()
+        campaign_search = request.GET.get('campaign_search', '').strip()
+
+        # Get all accounts with search filter
+        accounts_list = Account.objects.select_related().all()
+        if account_search:
+            accounts_list = accounts_list.filter(
+                Q(username__icontains=account_search) |
+                Q(status__icontains=account_search)
+            )
+
+        accounts_paginator = Paginator(accounts_list, 5)  # 10 accounts per page
+        accounts_page = request.GET.get('accounts_page', 1)
+
+        try:
+            accounts = accounts_paginator.page(accounts_page)
+        except PageNotAnInteger:
+            accounts = accounts_paginator.page(1)
+        except EmptyPage:
+            accounts = accounts_paginator.page(accounts_paginator.num_pages)
+
+        # Get campaigns with search filter
+        campaigns_list = DMCampaign.objects.filter(is_active=True)
+        if campaign_search:
+            campaigns_list = campaigns_list.filter(
+                Q(name__icontains=campaign_search) |
+                Q(template__name__icontains=campaign_search)
+            )
+
+        campaigns_paginator = Paginator(campaigns_list, 5)  # 10 campaigns per page
+        campaigns_page = request.GET.get('campaigns_page', 1)
+
+        try:
+            campaigns = campaigns_paginator.page(campaigns_page)
+        except PageNotAnInteger:
+            campaigns = campaigns_paginator.page(1)
+        except EmptyPage:
+            campaigns = campaigns_paginator.page(campaigns_paginator.num_pages)
+
+        # Non-paginated items
+        alerts = Alert.objects.order_by('-timestamp')[:5]
         pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
         unclassified_users = ScrapedUser.objects.filter(
             Q(profession='') | Q(country=''), biography__isnull=False
         ).count()
-        campaigns = DMCampaign.objects.filter(is_active=True)
         templates = DMTemplate.objects.filter(active=True)
+
         return render(request, 'dmbot/status.html', {
             'accounts': accounts,
             'alerts': alerts,
             'pending_enrichment': pending_enrichment,
             'unclassified_users': unclassified_users,
             'campaigns': campaigns,
-            'templates': templates
+            'templates': templates,
+            'account_search': account_search,
+            'campaign_search': campaign_search,
         })
+
 
 class AccountUploadView(LoginRequiredMixin, View):
     """View to handle CSV upload for Instagram accounts"""
@@ -206,8 +251,38 @@ class DMTemplateView(LoginRequiredMixin, View):
                 'categories': ['general', 'photography', 'art', 'travel', 'business', 'other']
             })
 
+
 class ScrapedUsersView(LoginRequiredMixin, View):
-    """View to display list of scraped users"""
+    """View to display list of scraped users with pagination and search"""
+
     def get(self, request):
-        users = ScrapedUser.objects.select_related('account').all().order_by('-scraped_at')
-        return render(request, 'dmbot/scraped_users.html', {'users': users})
+        # Get search query
+        search_query = request.GET.get('search', '').strip()
+
+        users_list = ScrapedUser.objects.select_related('account').all().order_by('-scraped_at')
+
+        # Apply search filter
+        if search_query:
+            users_list = users_list.filter(
+                Q(username__icontains=search_query) |
+                Q(biography__icontains=search_query) |
+                Q(profession__icontains=search_query) |
+                Q(country__icontains=search_query) |
+                Q(account__username__icontains=search_query)
+            )
+
+        # Pagination
+        paginator = Paginator(users_list, 20)  # 20 users per page
+        page = request.GET.get('page', 1)
+
+        try:
+            users = paginator.page(page)
+        except PageNotAnInteger:
+            users = paginator.page(1)
+        except EmptyPage:
+            users = paginator.page(paginator.num_pages)
+
+        return render(request, 'dmbot/scraped_users.html', {
+            'users': users,
+            'search_query': search_query,
+        })
