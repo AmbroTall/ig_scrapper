@@ -1,9 +1,76 @@
-{% extends 'base.html' %}
+{% extends 'dmbot/base.html' %}
+
 {% block content %}
-<h2>Upload Accounts</h2>
-<form method="post" enctype="multipart/form-data">
-    {% csrf_token %}
-    <label>CSV File (username,password): <input type="file" name="csv_file"></label><br>
-    <button type="submit">Upload</button>
-</form>
+<div class="max-w-2xl mx-auto">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <!-- Header -->
+        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-primary to-secondary">
+            <h2 class="text-2xl font-bold text-white">Upload Instagram Accounts</h2>
+            <p class="mt-1 text-sm text-indigo-100">Add new accounts to your automation system</p>
+        </div>
+
+        <!-- Info Card -->
+        <div class="px-6 py-4 bg-blue-50 border-b border-blue-100">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-blue-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-blue-900">CSV File Format</h3>
+                    <p class="mt-1 text-sm text-blue-700">Your CSV file should contain three columns: <strong>username</strong>, <strong>password</strong>, and <strong>secret_key</strong></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Form -->
+        <form method="post" enctype="multipart/form-data" class="p-6 space-y-6">
+            {% csrf_token %}
+
+            <div>
+                <label for="csv_file" class="block text-sm font-medium text-gray-700 mb-2">
+                    Select CSV File
+                </label>
+                <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary transition-colors">
+                    <div class="space-y-2 text-center">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <div class="flex text-sm text-gray-600">
+                            <label for="csv_file" class="relative cursor-pointer bg-white rounded-md font-medium text-primary hover:text-indigo-700 focus-within:outline-none">
+                                <span>Upload a file</span>
+                                <input id="csv_file" name="csv_file" type="file" accept=".csv" class="sr-only" required>
+                            </label>
+                            <p class="pl-1">or drag and drop</p>
+                        </div>
+                        <p class="text-xs text-gray-500">CSV files only</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                <a href="{% url 'status' %}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+                    Cancel
+                </a>
+                <button type="submit" class="inline-flex items-center px-6 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm font-medium">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    Upload Accounts
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Example Section -->
+    <div class="mt-6 bg-gray-50 rounded-lg border border-gray-200 p-6">
+        <h3 class="text-sm font-semibold text-gray-900 mb-3">Example CSV Format:</h3>
+        <div class="bg-white rounded-lg border border-gray-300 p-4 font-mono text-xs text-gray-700">
+            <div class="text-gray-500">username,password,secret_key</div>
+            <div>john_doe,Pass123!,ABC123XYZ</div>
+            <div>jane_smith,SecureP@ss,DEF456UVW</div>
+        </div>
+    </div>
+</div>
 {% endblock %}

@@ -273,56 +273,29 @@ class InstagramScraper:
             return False
 
     def store_users_enhanced(self, usernames, account, source_type, source_value):
-        """Store users in bulk with detailed metadata"""
-        cl = setup_client(account)  # Removed proxy
-        if not cl:
-            self.logger.error(f"Failed to setup client for {account.username}")
-            return
+        """Store minimal user data in bulk and queue detailed enrichment"""
         users_to_create = []
         skipped_count = 0
-        for i, username in enumerate(usernames):
+        for username in usernames:
             try:
-                user_data = self._get_user_detailed_info(cl, username)
-                if not user_data:
-                    ScrapedUser.objects.update_or_create(
-                        username=username,
-                        defaults={
-                            "user_id": None,
-                            "biography": "",
-                            "follower_count": 0,
-                            "following_count": 0,
-                            "post_count": 0,
-                            "is_active": False,
-                            "account": account,
-                            "source_type": source_type,
-                            "source_value": source_value,
-                            "failure_reason": "Failed to fetch detailed info",
-                        },
-                    )
-                    skipped_count += 1
-                    continue
+                # Store minimal data
                 users_to_create.append(ScrapedUser(
                     username=username,
-                    user_id=user_data.get("user_id"),
-                    biography=user_data.get("biography", ""),
-                    follower_count=user_data.get("follower_count", 0),
-                    following_count=user_data.get("following_count", 0),
-                    post_count=user_data.get("post_count", 0),
-                    last_post_date=user_data.get("last_post_date"),
-                    is_active=user_data.get("is_active", True),
                     account=account,
                     source_type=source_type,
                     source_value=source_value,
+                    is_active=True,  # Assume active until proven otherwise
+                    details_fetched=False  # Mark as not enriched
                 ))
-                time.sleep(random.uniform(5, 10))
-                if (i + 1) % 50 == 0:
-                    time.sleep(random.uniform(120, 300))
             except Exception as e:
-                self.logger.error(f"Failed to process user {username}: {e}")
+                self.logger.error(f"Failed to prepare user {username}: {e}")
                 skipped_count += 1
+
         if users_to_create:
             ScrapedUser.objects.bulk_create(users_to_create, ignore_conflicts=True)
             self.logger.info(f"Stored {len(users_to_create)} users, skipped {skipped_count}")
+            # Queue enrichment task
+            # enrich_user_details_task.delay(account.id, source_type, source_value)
         else:
             self.logger.info(f"No users stored, skipped {skipped_count}")
 

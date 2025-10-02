@@ -1,22 +1,18 @@
-
-## 5. Advanced Filtering System (filter.py)
-
 import logging
 import re
 from django.db.models import Q
 from .models import ScrapedUser
-import openai
+import requests
 from django.conf import settings
-
+import json
 
 class UserFilter:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
     def filter_users(self, professions=None, countries=None, keywords=None,
-                     min_followers=None, max_followers=None, activity_days=30):
+                     min_followers=None, max_followers=None, activity_days=30, min_engagement=0.0):
         """Advanced user filtering with multiple criteria"""
-
         queryset = ScrapedUser.objects.filter(is_active=True)
 
         # Filter by professions
@@ -30,11 +26,11 @@ class UserFilter:
         if countries:
             queryset = queryset.filter(country__in=countries)
 
-        # Filter by keywords in bio
+        # Filter by keywords in bio or keywords field
         if keywords:
             keyword_q = Q()
             for keyword in keywords:
-                keyword_q |= Q(biography__icontains=keyword)
+                keyword_q |= Q(biography__icontains=keyword) | Q(keywords__contains=[keyword])
             queryset = queryset.filter(keyword_q)
 
         # Filter by follower count
@@ -42,6 +38,9 @@ class UserFilter:
             queryset = queryset.filter(follower_count__gte=min_followers)
         if max_followers:
             queryset = queryset.filter(follower_count__lte=max_followers)
+
+        if min_engagement:
+            queryset = queryset.filter(engagement_rate__gte=min_engagement)
 
         # Filter by activity
         if activity_days:
@@ -57,7 +56,6 @@ class UserFilter:
 
     def classify_users_ai(self, batch_size=50):
         """Use AI to classify users by profession and location"""
-
         unclassified_users = ScrapedUser.objects.filter(
             Q(profession='') | Q(country=''),
             biography__isnull=False
@@ -74,7 +72,6 @@ class UserFilter:
                     user.category_confidence = classification.get('confidence', 0.0)
                     user.save()
                     classified_count += 1
-
             except Exception as e:
                 self.logger.error(f"Failed to classify user {user.username}: {e}")
                 continue
@@ -83,13 +80,12 @@ class UserFilter:
         return classified_count
 
     def _classify_single_user(self, user):
-        """Classify a single user using AI"""
-        if not hasattr(settings, 'OPENAI_API_KEY') or not settings.OPENAI_API_KEY:
+        """Classify a single user using DeepSeek"""
+        if not hasattr(settings, 'DEEPSEEK_API_KEY') or not settings.DEEPSEEK_API_KEY:
+            self.logger.warning("DeepSeek API key not set, falling back to rule-based classification")
             return self._classify_with_rules(user)
 
         try:
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-
             prompt = f"""
             Analyze this Instagram user's biography and classify them:
 
@@ -113,19 +109,22 @@ class UserFilter:
             If you can't determine something, use empty string. Be specific with professions.
             """
 
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.3
+            response = requests.post(
+                'https://api.deepseek.com/v1/chat/completions',
+                headers={'Authorization': f'Bearer {settings.DEEPSEEK_API_KEY}'},
+                json={
+                    'model': 'deepseek-chat',
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 150,
+                    'temperature': 0.3
+                }
             )
-
-            import json
-            result = json.loads(response.choices[0].message.content)
-            return result
+            response.raise_for_status()
+            result = response.json()['choices'][0]['message']['content']
+            return json.loads(result)
 
         except Exception as e:
-            self.logger.error(f"AI classification failed for {user.username}: {e}")
+            self.logger.error(f"DeepSeek classification failed for {user.username}: {e}")
             return self._classify_with_rules(user)
 
     def _classify_with_rules(self, user):
@@ -155,7 +154,7 @@ class UserFilter:
                 max_matches = matches
                 detected_profession = profession
 
-        # Country patterns (basic)
+        # Country patterns
         country_patterns = {
             'usa': ['usa', 'america', 'us', 'new york', 'california', 'texas'],
             'uk': ['uk', 'london', 'england', 'britain'],

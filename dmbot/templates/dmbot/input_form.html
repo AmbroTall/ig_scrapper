@@ -1,18 +1,132 @@
-{% extends 'base.html' %}
+{% extends 'dmbot/base.html' %}
+
 {% block content %}
-<h2>Start Bot</h2>
-<form method="post">
-    {% csrf_token %}
-    <label>Hashtags (comma-separated): <input type="text" name="hashtags"></label><br>
-    <label>Locations (comma-separated): <input type="text" name="locations"></label><br>
-    <label>Followers (usernames, comma-separated): <input type="text" name="followers"></label><br>
-    <label>Following (usernames, comma-separated): <input type="text" name="following"></label><br>
-    <label>Likes (post URLs, comma-separated): <input type="text" name="likes"></label><br>
-    <label>Comments (post URLs, comma-separated): <input type="text" name="comments"></label><br>
-    <label>Tags (usernames, comma-separated): <input type="text" name="tags"></label><br>
-    <label>Professions (comma-separated): <input type="text" name="professions"></label><br>
-    <label>Countries (comma-separated): <input type="text" name="countries"></label><br>
-    <label>Keywords (comma-separated): <input type="text" name="keywords"></label><br>
-    <button type="submit">Start Scraping</button>
-</form>
+<div class="max-w-3xl mx-auto">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <!-- Header -->
+        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-primary to-secondary">
+            <h2 class="text-2xl font-bold text-white">Schedule Scraping Tasks</h2>
+            <p class="mt-1 text-sm text-indigo-100">Configure parameters to collect targeted Instagram users</p>
+        </div>
+
+        <!-- Form -->
+        <form method="post" class="p-6 space-y-6">
+            {% csrf_token %}
+
+            <!-- Hashtags -->
+            <div>
+                <label for="hashtags" class="block text-sm font-medium text-gray-700 mb-2">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                        </svg>
+                        Hashtags
+                    </div>
+                </label>
+                <input
+                    type="text"
+                    id="hashtags"
+                    name="hashtags"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
+                    placeholder="e.g., fitness, travel, photography"
+                >
+                <p class="mt-2 text-xs text-gray-500">Separate multiple hashtags with commas</p>
+            </div>
+
+            <!-- Locations -->
+            <div>
+                <label for="locations" class="block text-sm font-medium text-gray-700 mb-2">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Locations
+                    </div>
+                </label>
+                <input
+                    type="text"
+                    id="locations"
+                    name="locations"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
+                    placeholder="e.g., New York, London, Tokyo"
+                >
+                <p class="mt-2 text-xs text-gray-500">Separate multiple locations with commas</p>
+            </div>
+
+            <!-- Tags -->
+            <div>
+                <label for="tags" class="block text-sm font-medium text-gray-700 mb-2">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                        </svg>
+                        Tags
+                    </div>
+                </label>
+                <input
+                    type="text"
+                    id="tags"
+                    name="tags"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
+                    placeholder="e.g., art, design, creative"
+                >
+                <p class="mt-2 text-xs text-gray-500">Separate multiple tags with commas</p>
+            </div>
+
+            <!-- Info Box -->
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div class="flex items-start">
+                    <svg class="w-5 h-5 text-blue-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                    <div>
+                        <h3 class="text-sm font-medium text-blue-900">Scraping Requirements</h3>
+                        <p class="mt-1 text-sm text-blue-700">At least one field (hashtags, locations, or tags) must be filled to schedule scraping tasks.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                <a href="{% url 'status' %}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    Cancel
+                </a>
+                <button type="submit" class="inline-flex items-center px-6 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm font-medium">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Schedule Tasks
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- How it Works Section -->
+    <div class="mt-6 bg-gray-50 rounded-lg border border-gray-200 p-6">
+        <h3 class="text-sm font-semibold text-gray-900 mb-4 flex items-center">
+            <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            How It Works
+        </h3>
+        <div class="space-y-3 text-sm text-gray-600">
+            <div class="flex items-start">
+                <div class="flex-shrink-0 w-6 h-6 bg-primary rounded-full flex items-center justify-center text-white text-xs font-bold mr-3">1</div>
+                <p>Tasks are distributed across your healthy Instagram accounts</p>
+            </div>
+            <div class="flex items-start">
+                <div class="flex-shrink-0 w-6 h-6 bg-primary rounded-full flex items-center justify-center text-white text-xs font-bold mr-3">2</div>
+                <p>Each task is delayed randomly (5-15 minutes) to avoid detection</p>
+            </div>
+            <div class="flex items-start">
+                <div class="flex-shrink-0 w-6 h-6 bg-primary rounded-full flex items-center justify-center text-white text-xs font-bold mr-3">3</div>
+                <p>Scraped users are automatically saved and enriched with profile data</p>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

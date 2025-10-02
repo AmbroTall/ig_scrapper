@@ -19,5 +19,5 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # path("", include("dmbot.urls")),  # UI Kits Html files
+    path("", include("dmbot.urls")),  # UI Kits Html files
 ]

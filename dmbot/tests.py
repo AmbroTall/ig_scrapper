@@ -15,7 +15,7 @@ scraper.warm_up_account(acc)
 time.sleep(50)
 
 # Example: scrape 5 users from hashtag "fitness"
-tags = scraper.collect_usernames(acc, "hashtag", "watermelon", amount=5)
+tags = scraper.collect_usernames(acc, "hashtag", "python", amount=5)
 
 # Store them
 scraper.store_users_enhanced(tags, acc, "hashtag", "watermelon")

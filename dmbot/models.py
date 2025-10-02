@@ -140,6 +140,7 @@ class ScrapedUser(models.Model):
         Account, on_delete=models.SET_NULL,
         null=True, blank=True, related_name='sent_dms'
     )
+    details_fetched = models.BooleanField(default=False)  # NEW FIELD to track enrichment status
     dm_response_received = models.BooleanField(default=False)
 
     class Meta:
@@ -147,6 +148,7 @@ class ScrapedUser(models.Model):
             models.Index(fields=['is_active', 'dm_sent']),
             models.Index(fields=['profession', 'country']),
             models.Index(fields=['scraped_at']),
+            models.Index(fields=['details_fetched']),  # NEW INDEX for efficient querying
         ]
 
     def __str__(self):

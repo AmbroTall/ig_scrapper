@@ -2,9 +2,12 @@ import logging
 import random
 import time
 import requests
+from django.core import cache
 from django.utils import timezone
 from django.conf import settings
 from instagrapi.exceptions import ClientError, RateLimitError
+
+from .filter import UserFilter
 from .models import ScrapedUser, DMTemplate, DMCampaign, Account
 from .utils import setup_client, send_alert
 
@@ -16,8 +19,16 @@ class DMSender:
 
     def generate_dynamic_dm(self, bio, template):
         """Generate personalized DM using DeepSeek"""
+        if not bio:
+            self.logger.info("Empty bio, using raw template")
+            return template
+        cache_key = f"dm_{hash(bio)}_{hash(template)}"
+        cached_dm = cache.get(cache_key)
+        if cached_dm:
+            self.logger.info("Using cached DM")
+            return cached_dm
         try:
-            prompt = f"Create a concise, friendly Instagram DM based on this template: '{template}'. Personalize it using the user's bio: '{bio}'. Keep it natural and under 100 characters."
+            prompt = f"Generate a friendly, concise Instagram DM (under 100 chars) based on template: '{template}'. Personalize for user bio: '{bio}'. Avoid salesy tone, sound human."
             response = requests.post(
                 'https://api.deepseek.com/v1/completions',
                 headers={'Authorization': f'Bearer {self.deepseek_api_key}'},
@@ -25,7 +36,9 @@ class DMSender:
                 proxies=random.choice(self.proxies) if self.proxies else None
             )
             response.raise_for_status()
-            return response.json()['choices'][0]['text'].strip()
+            dm_text = response.json()['choices'][0]['text'].strip()
+            cache.set(cache_key, dm_text, timeout=3600)  # Cache for 1 hour
+            return dm_text
         except Exception as e:
             self.logger.error(f"DeepSeek DM generation failed: {e}")
             return template  # Fallback to template
@@ -37,16 +50,26 @@ class DMSender:
             if not campaign.is_active:
                 self.logger.info(f"Campaign {campaign.name} is inactive")
                 return
+            if not DMTemplate.objects.filter(id=campaign.template_id, active=True).exists():
+                self.logger.error(f"No active template for campaign {campaign.name}")
+                send_alert(f"No active template for campaign {campaign.name}", "error")
+                return
             template = campaign.template.template
             accounts = campaign.accounts.filter(status="idle", warmed_up=True)
-            users = ScrapedUser.objects.filter(
-                dm_sent=False, is_active=True, account__in=accounts
-            ).exclude(failure_reason__isnull=False)[:max_dms_per_account * accounts.count()]
+            user_filter = UserFilter()
+            users = user_filter.filter_users(
+                professions=campaign.target_filters.get('professions', []),
+                countries=campaign.target_filters.get('countries', []),
+                keywords=campaign.target_filters.get('keywords', []),
+                activity_days=30
+            ).filter(
+                dm_sent=False, is_active=True, account__in=campaign.accounts.filter(status="idle", warmed_up=True)
+            )[:max_dms_per_account * campaign.accounts.count()]
             for account in accounts:
                 if not account.can_send_dm():
                     self.logger.info(f"Account {account.username} cannot send DMs")
                     continue
-                cl = setup_client(account, proxy=random.choice(self.proxies) if self.proxies else None)
+                cl = setup_client(account)
                 if not cl:
                     account.update_health_score(False, "dm")
                     continue

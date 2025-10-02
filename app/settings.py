@@ -158,9 +158,9 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dmbot.tasks.health_check_task',
         'schedule': 300.0,  # Every 5 minutes
     },
-    'daily-reset': {
-        'task': 'dmbot.tasks.daily_reset_task',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight
+    'scrape-users-daily': {
+        'task': 'dmbot.tasks.scrape_users_task',
+        'schedule': 3600.0,
     },
     'warmup-accounts': {
         'task': 'dmbot.tasks.warmup_accounts_task',
@@ -168,6 +168,6 @@ CELERY_BEAT_SCHEDULE = {
     },
     'classify-users': {
         'task': 'dmbot.tasks.classify_users_task',
-        'schedule': 1800.0,  # Every 30 minutes
+        'schedule': 3600.0,  # Every hour
     },
 }
