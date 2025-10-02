@@ -164,9 +164,9 @@ class InstagramScraper:
         """Scrape likers of top posts for a hashtag with batch processing"""
         usernames = set()
         try:
-            max_posts = 10  # Max posts to try
-            min_likers_threshold = 20  # Skip posts with fewer likers
-            num_posts = random.randint(3, 7)  # Initial post count
+            max_posts = 50  # Max posts to try
+            min_likers_threshold = 2  # Skip posts with fewer likers
+            num_posts = random.randint(10, 50)  # Initial post count
             top_medias = cl.hashtag_medias_top(hashtag, num_posts)
             likers_per_post = min(200, max(100, int(amount / len(top_medias))))  # Dynamic likers per post
             posts_processed = 0
