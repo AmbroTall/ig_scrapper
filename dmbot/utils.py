@@ -2,6 +2,7 @@ import logging
 import os
 import random
 import time
+import uuid
 from datetime import timedelta
 from django.utils import timezone
 from instagrapi import Client
@@ -83,34 +84,66 @@ def _validate_credentials(account):
     return True
 
 def _configure_client(cl, account):
-    """Configure client with device settings"""
-    cl.delay_range = getattr(settings, 'DELAY_RANGE', [2, 5])  # Increased for safety
+    """Configure client with dynamic device settings for large-scale management"""
+    cl.delay_range = getattr(settings, 'DELAY_RANGE', [2, 7])  # Slightly wider for human-like behavior
 
-    # Use stored device settings or generate new ones
     if account.device_settings:
         device_settings = account.device_settings
     else:
-        device_settings = {
-            "app_version": "269.0.0.18.75",
-            "android_version": random.choice([26, 28, 29, 30]),
-            "android_release": random.choice(["8.0.0", "9", "10", "11"]),
-            "dpi": random.choice(["420dpi", "480dpi", "560dpi"]),
-            "resolution": random.choice(["1080x1920", "1080x2340", "1440x3040"]),
-            "manufacturer": random.choice(["Samsung", "Google", "OnePlus", "Xiaomi"]),
-            "model": random.choice(["Galaxy S10", "Pixel 5", "OnePlus 8", "Mi 10"]),
-            "cpu": "qcom",
-            "version_code": "314665256",
+        # Randomized device profile pool
+        android_versions = {
+            26: "8.0.0",
+            27: "8.1.0",
+            28: "9",
+            29: "10",
+            30: "11",
+            31: "12",
         }
-        account.device_settings = device_settings
-        account.save()
 
+        manufacturers_models = {
+            "Samsung": ["Galaxy S9", "Galaxy S10", "Galaxy S20", "Galaxy Note 10", "Galaxy A51"],
+            "Google": ["Pixel 3", "Pixel 4", "Pixel 5", "Pixel 6"],
+            "OnePlus": ["OnePlus 6T", "OnePlus 7T", "OnePlus 8", "OnePlus 9"],
+            "Xiaomi": ["Mi 9", "Mi 10", "Redmi Note 8", "Redmi Note 10"],
+            "Huawei": ["P30", "Mate 20 Pro", "P40 Lite"],
+        }
+
+        manufacturer = random.choice(list(manufacturers_models.keys()))
+        model = random.choice(manufacturers_models[manufacturer])
+        android_version = random.choice(list(android_versions.keys()))
+
+        device_settings = {
+            "app_version": random.choice([
+                "268.0.0.18.72", "269.0.0.18.75", "270.0.0.22.98", "271.0.0.12.109"
+            ]),
+            "android_version": android_version,
+            "android_release": android_versions[android_version],
+            "dpi": random.choice(["420dpi", "480dpi", "560dpi", "640dpi"]),
+            "resolution": random.choice([
+                "1080x1920", "1080x2340", "1440x3040", "1440x3200"
+            ]),
+            "manufacturer": manufacturer,
+            "model": model,
+            "cpu": random.choice(["qcom", "exynos", "kirin", "mediatek"]),
+            "version_code": str(random.randint(300000000, 350000000)),  # Keep changing
+            "uuid": str(uuid.uuid4()),  # unique per device
+        }
+
+        account.device_settings = device_settings
+        account.save(update_fields=["device_settings"])
+
+    # Configure client
     cl.set_device(device_settings)
 
-    # Set realistic user agent
-    user_agents = [
-        f"Instagram {device_settings['app_version']} Android ({device_settings['android_version']}/{device_settings['android_release']}; {device_settings['dpi']}; {device_settings['resolution']}; {device_settings['manufacturer']}; {device_settings['model']}; {device_settings['cpu']})",
-    ]
-    cl.set_user_agent(random.choice(user_agents))
+    # Dynamic user agent
+    user_agent = (
+        f"Instagram {device_settings['app_version']} "
+        f"Android ({device_settings['android_version']}/{device_settings['android_release']}; "
+        f"{device_settings['dpi']}; {device_settings['resolution']}; "
+        f"{device_settings['manufacturer']}; {device_settings['model']}; "
+        f"{device_settings['cpu']})"
+    )
+    cl.set_user_agent(user_agent)
 
 def _load_session(cl, account):
     """Load existing session if valid, stop on ChallengeRequired"""
@@ -170,30 +203,47 @@ def _validate_session(cl, account):
         return False
 
 def _perform_login(cl, account):
-    """Perform fresh login if session is unavailable/invalid"""
+    """Perform fresh login with TOTP 2FA support"""
     logger = logging.getLogger(__name__)
     login_success = False
 
     try:
-        logger.info(f"Attempting fresh login for {account.username}")
-        if cl.login(account.username, account.password):
-            login_success = True
+        logger.info(f"Attempting login for {account.username}")
+
+        if account.secret_key:
+            # Clean secret key (remove spaces, uppercase)
+            secret_key = account.secret_key.replace(" ", "").upper()
+            two_factor_code = cl.totp_generate_code(secret_key)
+
+            # Try login with verification code
+            cl.login(
+                account.username,
+                account.password,
+                verification_code=two_factor_code
+            )
+        else:
+            # Normal login if no 2FA configured
+            cl.login(account.username, account.password)
+
+        login_success = True
+
     except Exception as e:
-        logger.error(f"Couldn't login {account.username}: {e}")
+        logger.error(f"Login error for {account.username}: {e}")
         login_success = False
 
+    # Update account status
     if login_success:
         account.last_login = timezone.now()
         account.login_failures = 0
         account.last_login_failure = None
-        account.save()
+        account.save(update_fields=["last_login", "login_failures", "last_login_failure"])
         logger.info(f"Login successful for {account.username}")
         return True
     else:
         account.login_failures += 1
         account.last_login_failure = timezone.now()
-        account.save()
-        send_alert(f"Login failed for {account.username}", 'error', account)
+        account.save(update_fields=["login_failures", "last_login_failure"])
+        send_alert(f"Login failed for {account.username}", "error", account)
         return False
 
 def _save_session(cl, account):

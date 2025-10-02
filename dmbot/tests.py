@@ -8,7 +8,7 @@ from dmbot.utils import setup_client
 scraper = InstagramScraper()
 
 # Fetch one usable account
-acc = Account.objects.get(id=4)
+acc = Account.objects.get(id=5)
 # acc = Account.objects.filter(status="idle", health_score__gt=50).last()
 
 scraper.warm_up_account(acc)
@@ -18,7 +18,7 @@ time.sleep(50)
 tags = scraper.collect_usernames(acc, "hashtag", "watermelon", amount=5)
 
 # Store them
-scraper.store_users_enhanced(tags, acc, "hashtag", "fitness")
+scraper.store_users_enhanced(tags, acc, "hashtag", "watermelon")
 
 # Expand first 2 results (followers)
 if tags:

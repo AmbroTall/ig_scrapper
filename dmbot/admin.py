@@ -17,7 +17,7 @@ class AccountAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Account Info", {
-            "fields": ("username", "password", "session_data", "device_settings")
+            "fields": ("username", "password", "session_data", "device_settings", "secret_key")
         }),
         ("Status & Health", {
             "fields": ("status", "health_score", "last_active")

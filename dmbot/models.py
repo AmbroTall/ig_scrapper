@@ -10,6 +10,7 @@ import json
 
 class Account(models.Model):
     username = models.CharField(max_length=255, unique=True)
+    secret_key = models.CharField(max_length=255, null=True, blank=True)  # 🔑 NEW FIELD
     password = models.CharField(max_length=255)
     session_data = models.JSONField(null=True, blank=True)
     device_settings = models.JSONField(null=True, blank=True)
