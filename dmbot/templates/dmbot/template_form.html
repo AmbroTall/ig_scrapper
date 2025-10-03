@@ -81,10 +81,43 @@
         </form>
     </div>
 
+    <!-- Search Bar -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <form method="get" class="flex gap-2">
+            <div class="flex-1 relative">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                <input type="text" name="search" value="{{ search_query }}" placeholder="Search templates by name, text, or category..." class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary">
+            </div>
+            <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                Search
+            </button>
+            {% if search_query %}
+            <a href="{% url 'template_form' %}" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
+                Clear
+            </a>
+            {% endif %}
+        </form>
+        {% if search_query %}
+        <p class="mt-2 text-sm text-gray-600">
+            Searching for: <span class="font-semibold text-gray-900">"{{ search_query }}"</span>
+        </p>
+        {% endif %}
+    </div>
+
     <!-- Existing Templates -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-200">
             <h2 class="text-lg font-semibold text-gray-900">Existing Templates</h2>
+            {% if templates %}
+            <p class="mt-1 text-sm text-gray-600">
+                Showing <span class="font-semibold">{{ templates.start_index }}</span> to <span class="font-semibold">{{ templates.end_index }}</span> of <span class="font-semibold">{{ templates.paginator.count }}</span> templates
+                {% if search_query %}<span class="text-gray-500">(filtered)</span>{% endif %}
+            </p>
+            {% endif %}
         </div>
         {% if templates %}
         <div class="overflow-x-auto">
@@ -135,13 +168,74 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination Controls -->
+        {% if templates.paginator.num_pages > 1 %}
+        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    Page <span class="font-semibold">{{ templates.number }}</span> of <span class="font-semibold">{{ templates.paginator.num_pages }}</span>
+                </div>
+                <nav class="flex items-center space-x-2">
+                    {% if templates.has_previous %}
+                    <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        First
+                    </a>
+                    <a href="?page={{ templates.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Previous
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        First
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Previous
+                    </span>
+                    {% endif %}
+
+                    {% if templates.has_next %}
+                    <a href="?page={{ templates.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Next
+                    </a>
+                    <a href="?page={{ templates.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Last
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Next
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Last
+                    </span>
+                    {% endif %}
+                </nav>
+            </div>
+        </div>
+        {% endif %}
         {% else %}
         <div class="px-6 py-8 text-center">
             <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
             </svg>
-            <p class="mt-2 text-sm text-gray-500">No templates available yet</p>
-            <p class="text-xs text-gray-400">Create your first template above</p>
+            <h3 class="mt-4 text-lg font-medium text-gray-900">
+                {% if search_query %}
+                    No templates found matching "{{ search_query }}"
+                {% else %}
+                    No templates available yet
+                {% endif %}
+            </h3>
+            <p class="mt-2 text-sm text-gray-500">
+                {% if search_query %}
+                    Try a different search term or clear the search to see all templates
+                {% else %}
+                    Create your first template above
+                {% endif %}
+            </p>
+            {% if search_query %}
+            <a href="{% url 'template_form' %}" class="mt-6 inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+                Clear Search
+            </a>
+            {% endif %}
         </div>
         {% endif %}
     </div>

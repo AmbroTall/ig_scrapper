@@ -166,4 +166,8 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dmbot.tasks.classify_users_task',
         'schedule': 3600,  # Runs at 06:00 and 18:00
     },
+    'enrich-users': {
+        'task': 'dmbot.tasks.enrich_user_details_task',
+        'schedule': 3600,
+    },
 }

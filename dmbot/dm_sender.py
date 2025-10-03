@@ -6,10 +6,10 @@ from django.core import cache
 from django.utils import timezone
 from django.conf import settings
 from instagrapi.exceptions import ClientError, RateLimitError
-
 from .filter import UserFilter
-from .models import ScrapedUser, DMTemplate, DMCampaign, Account
+from .models import DMTemplate, DMCampaign
 from .utils import setup_client, send_alert
+
 
 class DMSender:
     def __init__(self):
@@ -37,14 +37,57 @@ class DMSender:
             )
             response.raise_for_status()
             dm_text = response.json()['choices'][0]['text'].strip()
-            cache.set(cache_key, dm_text, timeout=3600)  # Cache for 1 hour
+            cache.set(cache_key, dm_text, timeout=3600)
             return dm_text
         except Exception as e:
             self.logger.error(f"DeepSeek DM generation failed: {e}")
-            return template  # Fallback to template
+            return template
+
+    def perform_activity(self, cl, account, campaign):
+        """Perform light Instagram activity to mimic human behavior"""
+        try:
+            self.logger.info(f"Performing activity for {account.username}")
+
+            # Randomize activity counts between 2–6
+            hashtag_count = random.randint(2, 6)
+            story_count = random.randint(2, 6)
+
+            # Browse hashtags
+            self._browse_hashtags(cl, count=hashtag_count)
+            account.last_active = timezone.now()
+            account.update_health_score(True, "browse_hashtags")
+
+            # View stories
+            self._view_stories(cl, count=story_count)
+            account.last_active = timezone.now()
+            account.update_health_score(True, "view_stories")
+
+        except Exception as e:
+            self.logger.error(f"Activity failed for {account.username}: {e}", exc_info=True)
+
+    def _browse_hashtags(self, cl, count=3):
+        try:
+            hashtags = ["art", "design", "photography"]
+            for hashtag in random.sample(hashtags, min(count, len(hashtags))):
+                cl.hashtag_info(hashtag)
+                self.logger.info(f"Browsed hashtag: {hashtag}")
+                time.sleep(random.uniform(30, 70))
+        except Exception as e:
+            self.logger.debug(f"Browse hashtags failed: {e}")
+
+    def _view_stories(self, cl, count=3):
+        try:
+            stories = cl.timeline_feed()[:count]
+            if stories:
+                for story in stories:
+                    # Optionally: cl.story_view(story.pk)
+                    self.logger.info(f"Viewed story {story.get('pk', 'unknown')}")
+                    time.sleep(random.uniform(30, 80))
+        except Exception as e:
+            self.logger.debug(f"View stories failed: {e}")
 
     def send_dms_for_campaign(self, campaign_id, max_dms_per_account=15):
-        """Send DMs for a campaign"""
+        """Send DMs for a campaign with interleaved activities"""
         try:
             campaign = DMCampaign.objects.get(id=campaign_id)
             if not campaign.is_active:
@@ -74,6 +117,9 @@ class DMSender:
                     account.update_health_score(False, "dm")
                     continue
                 user_batch = users.filter(account=account)[:max_dms_per_account]
+                account.status = "sending_dms"
+                account.save()
+                dm_count = 0
                 for user in user_batch:
                     try:
                         dm_text = self.generate_dynamic_dm(user.biography, template)
@@ -87,7 +133,11 @@ class DMSender:
                         account.last_active = timezone.now()
                         account.update_health_score(True, "dm")
                         self.logger.info(f"Sent DM to {user.username} from {account.username}")
-                        time.sleep(random.uniform(30, 60))  # Longer delay for DMs
+                        dm_count += 1
+                        # Perform activity after every 3 DMs
+                        if dm_count % 3 == 0:
+                            self.perform_activity(cl, account, campaign)
+                        time.sleep(random.uniform(40, 120))
                     except RateLimitError:
                         account.status = "rate_limited"
                         account.save()
@@ -104,7 +154,7 @@ class DMSender:
                         user.save()
                 campaign.save()
                 account.save()
-                time.sleep(random.uniform(60, 120))  # Break between accounts
+                time.sleep(random.uniform(60, 120))
         except Exception as e:
             self.logger.error(f"DM campaign {campaign_id} failed: {e}")
             send_alert(f"DM campaign {campaign_id} failed: {str(e)}", "error")

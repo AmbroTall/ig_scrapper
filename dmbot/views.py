@@ -66,7 +66,7 @@ class StatusView(LoginRequiredMixin, View):
         campaign_search = request.GET.get('campaign_search', '').strip()
 
         # Get all accounts with search filter
-        accounts_list = Account.objects.select_related().all()
+        accounts_list = Account.objects.select_related().all().order_by("id")
         if account_search:
             accounts_list = accounts_list.filter(
                 Q(username__icontains=account_search) |
@@ -84,7 +84,7 @@ class StatusView(LoginRequiredMixin, View):
             accounts = accounts_paginator.page(accounts_paginator.num_pages)
 
         # Get campaigns with search filter
-        campaigns_list = DMCampaign.objects.filter(is_active=True)
+        campaigns_list = DMCampaign.objects.filter(is_active=True).order_by("id")
         if campaign_search:
             campaigns_list = campaigns_list.filter(
                 Q(name__icontains=campaign_search) |
@@ -218,39 +218,66 @@ class DMCampaignView(LoginRequiredMixin, View):
                 'accounts': Account.objects.filter(status='idle', warmed_up=True)
             })
 
+
 class DMTemplateView(LoginRequiredMixin, View):
-    """View to create and manage DM templates"""
+    """View to create and manage DM templates with pagination and search"""
+
     def get(self, request):
-        templates = DMTemplate.objects.all()
-        categories = ['general', 'photography', 'art', 'travel', 'business', 'other']  # Predefined categories
-        return render(request, 'dmbot/template_form.html', {'templates': templates, 'categories': categories})
+        # Get search query
+        search_query = request.GET.get('search', '').strip()
+
+        # Get all templates
+        templates_list = DMTemplate.objects.all().order_by("id")
+
+        # Apply search filter
+        if search_query:
+            templates_list = templates_list.filter(
+                Q(name__icontains=search_query) |
+                Q(template__icontains=search_query) |
+                Q(category__icontains=search_query)
+            )
+
+        # Pagination
+        paginator = Paginator(templates_list, 5)  # 10 templates per page
+        page = request.GET.get('page', 1)
+
+        try:
+            templates = paginator.page(page)
+        except PageNotAnInteger:
+            templates = paginator.page(1)
+        except EmptyPage:
+            templates = paginator.page(paginator.num_pages)
+
+        categories = ['general', 'photography', 'art', 'travel', 'business', 'other']
+
+        return render(request, 'dmbot/template_form.html', {
+            'templates': templates,
+            'categories': categories,
+            'search_query': search_query,
+        })
 
     def post(self, request):
         try:
             name = request.POST.get('name')
             template_text = request.POST.get('template')
-            category = request.POST.get('category', 'general')  # Default to 'general' if empty
+            category = request.POST.get('category', 'general')
+
             if not name or not template_text:
                 messages.error(request, "Name and template text are required.")
-                return render(request, 'dmbot/template_form.html', {
-                    'templates': DMTemplate.objects.all(),
-                    'categories': ['general', 'photography', 'art', 'travel', 'business', 'other']
-                })
+                return redirect('template_form')
+
             DMTemplate.objects.create(
                 name=name,
                 template=template_text,
-                category=category or 'general',  # Ensure non-empty category
+                category=category or 'general',
                 active=True
             )
             messages.success(request, f"Template '{name}' created successfully.")
-            return redirect('campaign')  # Redirect to /campaign/
+            return redirect('campaign')
+
         except Exception as e:
             messages.error(request, f"Error creating template: {str(e)}")
-            return render(request, 'dmbot/template_form.html', {
-                'templates': DMTemplate.objects.all(),
-                'categories': ['general', 'photography', 'art', 'travel', 'business', 'other']
-            })
-
+            return redirect('template_form')
 
 class ScrapedUsersView(LoginRequiredMixin, View):
     """View to display list of scraped users with pagination and search"""
@@ -272,7 +299,7 @@ class ScrapedUsersView(LoginRequiredMixin, View):
             )
 
         # Pagination
-        paginator = Paginator(users_list, 20)  # 20 users per page
+        paginator = Paginator(users_list, 10)  # 20 users per page
         page = request.GET.get('page', 1)
 
         try:
