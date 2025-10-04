@@ -1,20 +1,31 @@
+import re
+
+from celery import Celery
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 from django.db.models import Q
+from django.http import JsonResponse
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.views import View
 from django.utils import timezone
-from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate
-from .tasks import scrape_users_task, send_dms_task
+from django.views.decorators.http import require_http_methods
+
+from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate, DMLog
+from .tasks import scrape_users_task, send_dms_task, cancel_task
 import csv
 from io import TextIOWrapper
 import random
 
+
+# Initialize Celery app (adjust this based on your Celery configuration)
+app = Celery('app', broker='redis://localhost:6379/0')  # Update with your broker URL
+
 class InputFormView(LoginRequiredMixin, View):
     """View to handle input for scraping parameters"""
     def get(self, request):
-        return render(request, 'dmbot/input_form.html')
+        accounts = Account.objects.filter(status='idle', health_score__gte=50)
+        return render(request, 'dmbot/input_form.html', {'accounts': accounts})
 
     def post(self, request):
         try:
@@ -22,25 +33,42 @@ class InputFormView(LoginRequiredMixin, View):
             hashtags = [h.strip() for h in request.POST.get('hashtags', '').split(',') if h.strip()]
             locations = [l.strip() for l in request.POST.get('locations', '').split(',') if l.strip()]
             tags = [t.strip() for t in request.POST.get('tags', '').split(',') if t.strip()]
+            account_ids = request.POST.getlist('accounts')
 
             # Validate at least one source is provided
             if not any([hashtags, locations, tags]):
-                messages.error(request, "At least one scraping source (e.g., hashtag, location) is required.")
-                return render(request, 'dmbot/input_form.html')
+                messages.error(request, "At least one scraping source (e.g., hashtag, location, or tag) is required.")
+                return render(request, 'dmbot/input_form.html', {
+                    'accounts': Account.objects.filter(status='idle', health_score__gte=50)
+                })
 
-            # Get healthy accounts
-            accounts = Account.objects.filter(status='idle', health_score__gte=50)
+            # Validate at least one account is selected
+            if not account_ids:
+                messages.error(request, "At least one account must be selected for scraping.")
+                return render(request, 'dmbot/input_form.html', {
+                    'accounts': Account.objects.filter(status='idle', health_score__gte=50)
+                })
+
+            # Get selected accounts
+            accounts = Account.objects.filter(id__in=account_ids, status='idle', health_score__gte=50)
             if not accounts:
-                messages.error(request, "No healthy accounts available for scraping.")
-                return render(request, 'dmbot/input_form.html')
-            scrape_users_task.delay(accounts[0].id, "hashtag", hashtags[0])
+                messages.error(request, "No valid accounts selected for scraping.")
+                return render(request, 'dmbot/input_form.html', {
+                    'accounts': Account.objects.filter(status='idle', health_score__gte=50)
+                })
+
             # Schedule scraping tasks with randomized delays
-            for account in accounts[1:]:
+            first_account = True
+            for account in accounts:
                 # Reset daily counters if needed
                 account.reset_daily_counters()
                 for hashtag in hashtags:
-                    delay = random.randint(300, 900)  # 5–15 min
-                    scrape_users_task.apply_async((account.id, "hashtag", hashtag), countdown=delay)
+                    if first_account:
+                        scrape_users_task.delay(account.id, "hashtag", hashtag)
+                        first_account = False
+                    else:
+                        delay = random.randint(300, 900)  # 5–15 min
+                        scrape_users_task.apply_async((account.id, "hashtag", hashtag), countdown=delay)
                 for location in locations:
                     delay = random.randint(300, 900)
                     scrape_users_task.apply_async((account.id, "location", location), countdown=delay)
@@ -48,78 +76,126 @@ class InputFormView(LoginRequiredMixin, View):
                     delay = random.randint(300, 900)
                     scrape_users_task.apply_async((account.id, "tags", tag), countdown=delay)
 
-            # # Schedule filtering task
-            # if any([professions, countries, keywords]):
-            #     filter_users_task.delay(professions, countries, keywords)
-
             messages.success(request, "Scraping tasks scheduled successfully.")
             return redirect('status')
         except Exception as e:
             messages.error(request, f"Error scheduling tasks: {str(e)}")
-            return render(request, 'dmbot/input_form.html')
+            return render(request, 'dmbot/input_form.html', {
+                'accounts': Account.objects.filter(status='idle', health_score__gte=50)
+            })
 
-
-class StatusView(LoginRequiredMixin, View):
+class BotActivityView(View):
     def get(self, request):
-        # Get search queries
-        account_search = request.GET.get('account_search', '').strip()
-        campaign_search = request.GET.get('campaign_search', '').strip()
+        search_query = request.GET.get('search', '')
 
-        # Get all accounts with search filter
-        accounts_list = Account.objects.select_related().all().order_by("id")
+        # Fetch active Celery tasks
+        processed_activities = []
+        inspector = app.control.inspect()
+        try:
+            active_tasks = inspector.active() or {}  # Get active tasks from all workers
+            for worker, tasks in active_tasks.items():
+                for task in tasks:
+                    task_id = task.get('id')
+                    task_name = task.get('name', 'Unknown Task')
+                    args = task.get('args', [])
+                    # Extract account username from task args if available
+                    username = 'System'
+                    try:
+                        # Adjust based on your task args structure, e.g., (account_id, campaign_id)
+                        if args and isinstance(args, (list, tuple)) and len(args) > 0:
+                            account_id = args[0]  # Adjust based on your task args
+                            account = Account.objects.filter(id=account_id).first()
+                            username = account.username if account else 'System'
+                    except Exception:
+                        pass  # Fallback to 'System' if parsing fails
+                    # Apply search filter
+                    if search_query:
+                        if not (search_query.lower() in task_name.lower() or
+                                search_query.lower() in username.lower()):
+                            continue
+                    processed_activities.append({
+                        'task_id': task_id,
+                        'message': f"Running task: {task_name}",
+                        'username': username,
+                        'timestamp': task.get('time_start', None)  # Unix timestamp from Celery
+                    })
+        except Exception as e:
+            print(f"Error fetching active tasks: {e}")
+            processed_activities = []
+
+        # Paginate processed activities
+        paginator = Paginator(processed_activities, 10)
+        page_number = request.GET.get('page', 1)
+        activities_paginated = paginator.get_page(page_number)
+
+        return render(request, 'dmbot/bot_activity.html', {
+            'activities': activities_paginated,
+            'search_query': search_query
+        })
+
+    def post(self, request):
+        task_id = request.POST.get('task_id')
+        if task_id:
+            try:
+                # Directly revoke the task
+                app.control.revoke(task_id, terminate=True)
+                if request.is_ajax():
+                    return JsonResponse({'status': 'cancelled', 'message': f'Task {task_id} cancelled'})
+                messages.success(request, f"Task {task_id} cancelled successfully.")
+            except Exception as e:
+                if request.is_ajax():
+                    return JsonResponse({'status': 'failed', 'error': str(e)})
+                messages.error(request, f"Failed to cancel task: {str(e)}")
+        else:
+            if request.is_ajax():
+                return JsonResponse({'status': 'failed', 'error': 'No task_id provided'})
+            messages.error(request, "No task_id provided")
+        return redirect('bot_activity')
+
+class StatusView(View):
+    def get(self, request):
+        # Fetch accounts and campaigns with ordering
+        accounts = Account.objects.all().order_by('-last_active')  # Order by last_active descending
+        campaigns = DMCampaign.objects.select_related('template').all().order_by('-created_at')  # Order by created_at descending
+        templates = DMTemplate.objects.filter(active=True)
+        alerts = Alert.objects.filter(severity__in=['error', 'warning', 'critical']).order_by('-timestamp')[:5]
+        pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
+        enriched_users = ScrapedUser.objects.filter(details_fetched=True).count()
+
+        account_search = request.GET.get('account_search', '')
+        campaign_search = request.GET.get('campaign_search', '')
+
         if account_search:
-            accounts_list = accounts_list.filter(
+            accounts = accounts.filter(
                 Q(username__icontains=account_search) |
                 Q(status__icontains=account_search)
             )
-
-        accounts_paginator = Paginator(accounts_list, 5)  # 10 accounts per page
-        accounts_page = request.GET.get('accounts_page', 1)
-
-        try:
-            accounts = accounts_paginator.page(accounts_page)
-        except PageNotAnInteger:
-            accounts = accounts_paginator.page(1)
-        except EmptyPage:
-            accounts = accounts_paginator.page(accounts_paginator.num_pages)
-
-        # Get campaigns with search filter
-        campaigns_list = DMCampaign.objects.filter(is_active=True).order_by("id")
         if campaign_search:
-            campaigns_list = campaigns_list.filter(
+            campaigns = campaigns.filter(
                 Q(name__icontains=campaign_search) |
                 Q(template__name__icontains=campaign_search)
             )
 
-        campaigns_paginator = Paginator(campaigns_list, 5)  # 10 campaigns per page
+        # Paginate only if object count > 5
+        accounts_paginator = Paginator(accounts, 5) if accounts.count() > 5 else None
+        campaigns_paginator = Paginator(campaigns, 5) if campaigns.count() > 5 else None
+
+        accounts_page = request.GET.get('accounts_page', 1)
         campaigns_page = request.GET.get('campaigns_page', 1)
 
-        try:
-            campaigns = campaigns_paginator.page(campaigns_page)
-        except PageNotAnInteger:
-            campaigns = campaigns_paginator.page(1)
-        except EmptyPage:
-            campaigns = campaigns_paginator.page(campaigns_paginator.num_pages)
-
-        # Non-paginated items
-        alerts = Alert.objects.order_by('-timestamp')[:5]
-        pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
-        unclassified_users = ScrapedUser.objects.filter(
-            Q(profession='') | Q(country=''), biography__isnull=False
-        ).count()
-        templates = DMTemplate.objects.filter(active=True)
+        accounts_paginated = accounts_paginator.get_page(accounts_page) if accounts_paginator else accounts
+        campaigns_paginated = campaigns_paginator.get_page(campaigns_page) if campaigns_paginator else campaigns
 
         return render(request, 'dmbot/status.html', {
-            'accounts': accounts,
+            'accounts': accounts_paginated,
+            'campaigns': campaigns_paginated,
+            'templates': templates,
             'alerts': alerts,
             'pending_enrichment': pending_enrichment,
-            'unclassified_users': unclassified_users,
-            'campaigns': campaigns,
-            'templates': templates,
+            'enriched_users': enriched_users,
             'account_search': account_search,
             'campaign_search': campaign_search,
         })
-
 
 class AccountUploadView(LoginRequiredMixin, View):
     """View to handle CSV upload for Instagram accounts"""
@@ -218,7 +294,6 @@ class DMCampaignView(LoginRequiredMixin, View):
                 'accounts': Account.objects.filter(status='idle', warmed_up=True)
             })
 
-
 class DMTemplateView(LoginRequiredMixin, View):
     """View to create and manage DM templates with pagination and search"""
 
@@ -313,3 +388,120 @@ class ScrapedUsersView(LoginRequiredMixin, View):
             'users': users,
             'search_query': search_query,
         })
+
+class SentMessagesView(View):
+    def get(self, request):
+        search_query = request.GET.get('search', '')
+        messages_list = DMLog.objects.select_related('sender_account', 'recipient_user').order_by('-sent_at')
+
+        if search_query:
+            messages_list = messages_list.filter(
+                Q(recipient_user__username__icontains=search_query) |
+                Q(message__icontains=search_query) |
+                Q(sender_account__username__icontains=search_query)
+            )
+
+        paginator = Paginator(messages_list, 10)
+        page_number = request.GET.get('page', 1)
+        messages_paginated = paginator.get_page(page_number)
+
+        return render(request, 'dmbot/sent_messages.html', {
+            'messages': messages_paginated,
+            'search_query': search_query
+        })
+
+class AccountManagementView(View):
+    def get(self, request):
+        search_query = request.GET.get('search', '')
+        accounts = Account.objects.all().order_by('username')
+
+        if search_query:
+            accounts = accounts.filter(
+                Q(username__icontains=search_query) |
+                Q(status__icontains=search_query)
+            )
+
+        paginator = Paginator(accounts, 10)
+        page_number = request.GET.get('page', 1)
+        accounts_paginated = paginator.get_page(page_number)
+
+        return render(request, 'dmbot/account_management.html', {
+            'accounts': accounts_paginated,
+            'search_query': search_query
+        })
+
+    def post(self, request):
+        action = request.POST.get('action')
+        account_id = request.POST.get('account_id')
+
+        try:
+            account = Account.objects.get(id=account_id)
+            if action == 'delete':
+                account.delete()
+                messages.success(request, f"Account {account.username} deleted successfully.")
+            elif action == 'update':
+                username = request.POST.get('username')
+                password = request.POST.get('password')
+                secret_key = request.POST.get('secret_key')
+                account.username = username
+                account.password = password
+                account.secret_key = secret_key
+                account.save()
+                messages.success(request, f"Account {account.username} updated successfully.")
+        except Account.DoesNotExist:
+            messages.error(request, "Account not found.")
+        except Exception as e:
+            messages.error(request, f"Error performing action: {str(e)}")
+
+        return redirect('account_management')
+
+@require_http_methods(["GET"])
+def latest_activities_api(request):
+    processed_activities = []
+    inspector = app.control.inspect()
+    try:
+        active_tasks = inspector.active() or {}
+        for worker, tasks in active_tasks.items():
+            for task in tasks:
+                task_id = task.get('id')
+                task_name = task.get('name', 'Unknown Task')
+                args = task.get('args', [])
+                username = 'System'
+                try:
+                    if args and isinstance(args, (list, tuple)) and len(args) > 0:
+                        account_id = args[0]  # Adjust based on your task args
+                        account = Account.objects.filter(id=account_id).first()
+                        username = account.username if account else 'System'
+                except Exception:
+                    pass
+                from datetime import datetime
+                timestamp = datetime.fromtimestamp(task.get('time_start', 0)) if task.get('time_start') else None
+                processed_activities.append({
+                    'task_id': task_id,
+                    'message': f"Running task: {task_name}",
+                    'username': username,
+                    'timestamp': timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else None
+                })
+    except Exception as e:
+        print(f"Error fetching active tasks: {e}")
+    return JsonResponse({'activities': processed_activities})
+
+@require_http_methods(["GET"])
+def recent_logs_api(request):
+    # Fetch last 10 alerts (adjust as needed)
+    alerts = Alert.objects.select_related('account').order_by('-timestamp')[:10]
+    logs = []
+    for alert in alerts:
+        task_id = ''
+        if alert.message.startswith('Started'):
+            match = re.search(r'Started.*?(\btask_\w+\b)', alert.message)
+            if match:
+                task_id = match.group(1)
+        logs.append({
+            'timestamp': alert.timestamp.strftime('%Y-%m-%d %H:%M:%S,%f')[:-3],  # Mimic Celery log format
+            'severity': alert.severity.upper(),  # e.g., INFO, ERROR
+            'message': alert.message,
+            'account': alert.account.username if alert.account else 'System',
+            'task_id': task_id
+        })
+    return JsonResponse({'logs': logs})

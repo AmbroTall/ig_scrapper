@@ -73,6 +73,7 @@ def setup_client(account, retry_count=3):
 
     return None
 
+
 def _validate_credentials(account):
     """Validate account credentials format"""
     if not isinstance(account.username, str) or not isinstance(account.password, str):
@@ -82,6 +83,7 @@ def _validate_credentials(account):
     if len(account.username) < 3 or len(account.password) < 6:
         return False
     return True
+
 
 def _configure_client(cl, account):
     """Configure client with dynamic device settings for large-scale management"""
@@ -145,6 +147,7 @@ def _configure_client(cl, account):
     )
     cl.set_user_agent(user_agent)
 
+
 def _load_session(cl, account):
     """Load existing session if valid, stop on ChallengeRequired"""
     session_file = f"sessions/{account.username}.json"
@@ -193,6 +196,7 @@ def _load_session(cl, account):
         logging.warning(f"Couldn't load session for {account.username}: {e}")
         return False
 
+
 def _validate_session(cl, account):
     """Validate if session is still working"""
     try:
@@ -201,6 +205,7 @@ def _validate_session(cl, account):
     except Exception as e:
         logging.warning(f"Session validation error for {account.username}: {e}")
         return False
+
 
 def _perform_login(cl, account):
     """Perform fresh login with TOTP 2FA support"""
@@ -245,6 +250,7 @@ def _perform_login(cl, account):
         account.save(update_fields=["login_failures", "last_login_failure"])
         send_alert(f"Login failed for {account.username}", "error", account)
         return False
+
 
 def _save_session(cl, account):
     """Save session to file"""

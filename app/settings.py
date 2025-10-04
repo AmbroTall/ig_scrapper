@@ -141,15 +141,18 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 
 # Instagram Automation Settings
-SCRAPING_LIMIT_PER_SOURCE = 100
+SCRAPING_LIMIT_PER_SOURCE = 1000
 MAX_INACTIVE_DAYS = 30
 DELAY_RANGE = [10, 20]
+# Redis settings for locking
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6379
 
 # DM Settings
 MAX_DMS_PER_ACCOUNT_DAILY = 15
 DM_DELAY_BASE = 300  # 5 minutes base delay
 DM_PERSONALIZATION_AI = True
-
+SCRAPING_BATCH_SIZE = 100
 # OpenAI Configuration (optional)
 
 # Celery Configuration for task scheduling
@@ -162,12 +165,15 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dmbot.tasks.warmup_accounts_task',
         'schedule': crontab(hour='0,12', minute=0),  # Runs at 00:00 and 12:00
     },
-    'classify-users': {
-        'task': 'dmbot.tasks.classify_users_task',
-        'schedule': 3600,  # Runs at 06:00 and 18:00
-    },
-    'enrich-users': {
-        'task': 'dmbot.tasks.enrich_user_details_task',
-        'schedule': 3600,
-    },
+    # 'classify-users': {
+    #     'task': 'dmbot.tasks.classify_users_task',
+    #     'schedule': 3600,  # Runs at 06:00 and 18:00
+    # },
+    # 'enrich-users': {
+    #     'task': 'dmbot.tasks.enrich_user_details_task',
+    #     'schedule': 3600,
+    # },
 }
+
+
+DEEPSEEK_API_KEY = "sk-1fc47cd972734a8facd3640c64d6390c"

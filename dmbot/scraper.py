@@ -7,7 +7,7 @@ from instagrapi.exceptions import ClientError, UserNotFound, PrivateError, RateL
 from .models import ScrapedUser
 from .utils import setup_client, send_alert
 
-# Rate limiting decorator
+# Rate limiting decorator (unchanged)
 def rate_limit(max_calls_per_hour=60):
     def decorator(func):
         def wrapper(self, account, *args, **kwargs):
@@ -42,9 +42,9 @@ class InstagramScraper:
             account.status = "warming_up"
             account.save()
             warmup_activities = [
-                lambda: self._browse_explore(cl),
+                # lambda: self._browse_explore(cl),
                 lambda: self._like_posts(cl, count=random.randint(3, 7)),
-                lambda: self._view_stories(cl, count=random.randint(2, 5)),
+                # lambda: self._view_stories(cl, count=random.randint(2, 5)),
                 lambda: self._search_users(cl, count=random.randint(1, 3)),
                 lambda: self._browse_hashtags(cl, count=random.randint(2, 4)),
             ]
@@ -57,9 +57,11 @@ class InstagramScraper:
             account.last_active = timezone.now()
             account.update_health_score(True, 'warmup')
             self.logger.info(f"Warmed up {account.username} to level {max_level}")
+            send_alert(f"Warmed up {account.username} to level {max_level}", "info", account)
             return True
         except ClientError as e:
             self.logger.error(f"Warm-up failed for {account.username}: {e}")
+            send_alert(f"Warm-up failed for {account.username}: {e}", "error", account)
             account.update_health_score(False, 'warmup')
             return False
         finally:
@@ -72,6 +74,7 @@ class InstagramScraper:
             time.sleep(random.uniform(20, 60))
         except Exception as e:
             self.logger.debug(f"Browse explore failed: {e}")
+            send_alert(f"Browse explore failed: {e}", "info")
 
     def _like_posts(self, cl, count=5):
         try:
@@ -81,6 +84,7 @@ class InstagramScraper:
                 time.sleep(random.uniform(30, 80))
         except Exception as e:
             self.logger.debug(f"Like posts failed: {e}")
+            send_alert(f"Like posts failed: {e}", "info")
 
     def _view_stories(self, cl, count=3):
         try:
@@ -88,6 +92,7 @@ class InstagramScraper:
             time.sleep(random.uniform(30, 80))
         except Exception as e:
             self.logger.debug(f"View stories failed: {e}")
+            send_alert(f"View stories failed: {e}", "info")
 
     def _search_users(self, cl, count=2):
         try:
@@ -97,6 +102,7 @@ class InstagramScraper:
                 time.sleep(random.uniform(30, 70))
         except Exception as e:
             self.logger.debug(f"Search users failed: {e}")
+            send_alert(f"Search users failed: {e}", "info")
 
     def _browse_hashtags(self, cl, count=3):
         try:
@@ -106,22 +112,25 @@ class InstagramScraper:
                 time.sleep(random.uniform(30, 70))
         except Exception as e:
             self.logger.debug(f"Browse hashtags failed: {e}")
+            send_alert(f"Browse hashtags failed: {e}", "info")
 
     @rate_limit(max_calls_per_hour=100)
     def collect_usernames(self, account, source_type, source_id, amount=None):
         """Collect usernames by scraping likers of top hashtag posts"""
         if not account.can_scrape():
             self.logger.info(f"Account {account.username} cannot scrape (health: {account.health_score}%)")
+            send_alert(f"Account {account.username} cannot scrape (health: {account.health_score}%)", "info", account)
             return set()
         if not account.warmed_up:
             self.logger.info(f"Warming up {account.username}")
+            send_alert(f"Warming up {account.username}", "info", account)
             if not self.warm_up_account(account):
                 send_alert(f"Warm-up failed for {account.username}", "warning", account)
                 return set()
         amount = self._calculate_scrape_amount(account, amount)
         if amount <= 0:
             return set()
-        cl = setup_client(account)  # Removed proxy
+        cl = setup_client(account)
         if not cl:
             account.update_health_score(False, "scrape")
             return set()
@@ -129,19 +138,18 @@ class InstagramScraper:
         try:
             account.status = "scraping"
             account.save()
-            if source_type == "hashtag":
-                usernames = self._scrape_hashtag_likers(cl, source_id, amount)
-                if len(usernames) < amount * 0.5:  # Fallback if yield is too low
-                    self.logger.warning(f"Low yield ({len(usernames)}) for hashtag:{source_id}, falling back to search")
-                    usernames |= self._scrape_search(cl, source_id, amount - len(usernames))
-            elif source_type == "search":
-                usernames = self._scrape_search(cl, source_id, amount)
+            if source_type == "search":
+                # Saving is handled within _scrape_hashtag_likers
+                self._scrape_hashtag_likers(cl, source_id, account, source_type)
+            elif source_type == "hashtag":
+                usernames = self._scrape_search(cl, source_id, amount, account)
+                if usernames:
+                    account.last_active = timezone.now()
+                    account.update_health_score(True, "scrape")
+                    self.logger.info(f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}")
+                    send_alert(f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}", "info", account)
             else:
                 raise ValueError(f"Invalid source_type: {source_type}")
-            account.users_scraped_today += len(usernames)
-            account.last_active = timezone.now()
-            account.update_health_score(True, "scrape")
-            self.logger.info(f"Collected {len(usernames)} usernames from {source_type}:{source_id}")
         except RateLimitError:
             account.status = "rate_limited"
             account.save()
@@ -149,10 +157,12 @@ class InstagramScraper:
             time.sleep(random.uniform(300, 600))
         except ClientError as e:
             self.logger.error(f"ClientError in collect_usernames: {e}")
+            send_alert(f"ClientError in collect_usernames: {e}", "error", account)
             account.update_health_score(False, "scrape")
             self._handle_client_error(account, e)
         except Exception as e:
             self.logger.error(f"Unexpected error: {e}", exc_info=True)
+            send_alert(f"Unexpected error: {str(e)}", "error", account)
             account.update_health_score(False, "scrape")
             send_alert(f"Scraping error for {account.username}: {str(e)}", "error", account)
         finally:
@@ -160,74 +170,266 @@ class InstagramScraper:
             account.save()
         return usernames
 
-    def _scrape_hashtag_likers(self, cl, hashtag, amount):
-        """Scrape likers of top posts for a hashtag with batch processing"""
+    def _scrape_hashtag_likers(self, cl, hashtag, account, source_type="hashtag"):
+
+        """Scrape all likers of top posts for a hashtag with human-like behavior and save in batches"""
         usernames = set()
+        batch_size = getattr(settings, 'SCRAPING_BATCH_SIZE', 1000)
+        total_likers_processed = 0
+        total_posts_processed = 0  # Track total posts processed
         try:
-            max_posts = 50  # Max posts to try
-            min_likers_threshold = 2  # Skip posts with fewer likers
-            num_posts = random.randint(10, 50)  # Initial post count
+            max_posts = 100
+            num_posts = random.randint(20, 50)
+            print("Taller am reaching here")
             top_medias = cl.hashtag_medias_top(hashtag, num_posts)
-            likers_per_post = min(200, max(100, int(amount / len(top_medias))))  # Dynamic likers per post
+            print("Taller am  na pia reaching here")
+
             posts_processed = 0
+            self.logger.info(f"Scraping likers for hashtag {hashtag}, {len(top_medias)} initial posts")
+            send_alert(f"Scraping likers for hashtag {hashtag}, {len(top_medias)} initial posts", "info", account)
+
             for media in top_medias:
                 try:
                     likers = []
                     chunk_size = 50
-                    total_likers = 0
-                    while total_likers < likers_per_post and total_likers < amount - len(usernames):
+                    has_more_likers = True
+                    media_likers_count = 0
+                    while has_more_likers:
                         try:
                             likers_chunk = cl.media_likers(media.pk)
-                            if len(likers_chunk) < min_likers_threshold:
-                                self.logger.warning(f"Skipping media {media.pk}: only {len(likers_chunk)} likers")
+                            if not likers_chunk:
+                                self.logger.info(f"No more likers for media {media.pk}")
+                                send_alert(f"No more likers for media {media.pk}", "info", account)
+                                has_more_likers = False
                                 break
-                            likers.extend(likers_chunk[:chunk_size])
-                            total_likers += len(likers_chunk)
-                            time.sleep(random.uniform(10, 20))  # Delay between chunks
+
+                            likers.extend(likers_chunk)
+                            media_likers_count += len(likers_chunk)
+                            self.logger.info(
+                                f"Fetched {len(likers_chunk)} valid likers for media {media.pk}, "
+                                f"total for this media {media_likers_count}"
+                            )
+                            send_alert(
+                                f"Fetched {len(likers_chunk)} valid likers for media {media.pk}, "
+                                f"total for this media {media_likers_count}", "info", account
+                            )
+                            time.sleep(random.uniform(10, 20))
                         except RateLimitError:
                             self.logger.warning(f"Rate limit hit for media {media.pk}")
-                            send_alert(f"Rate limit hit for media {media.pk} on {hashtag}", "warning")
+                            send_alert(f"Rate limit hit for media {media.pk} on {hashtag}", "warning", account)
                             time.sleep(random.uniform(300, 600))
+                            has_more_likers = False
                             break
                         except Exception as e:
                             self.logger.warning(f"Failed to fetch likers for media {media.pk}: {e}")
+                            send_alert(f"Failed to fetch likers for media {media.pk}: {e}", "warning", account)
+                            has_more_likers = False
                             break
-                    if total_likers >= min_likers_threshold:
-                        for liker in likers[:likers_per_post]:
+
+                    # Add valid usernames to set
+                    previous_count = len(usernames)
+                    for liker in likers:
+                        if liker.username:  # Double-check username exists
                             usernames.add(liker.username)
-                        self.logger.info(f"Scraped {len(likers[:likers_per_post])} likers from media {media.pk}")
+                    total_likers_processed += media_likers_count
+                    self.logger.info(
+                        f"Added {len(usernames) - previous_count} unique usernames from media {media.pk}, "
+                        f"total unique usernames {len(usernames)}, "
+                        f"total likers processed {total_likers_processed}"
+                    )
+                    send_alert(
+                        f"Added {len(usernames) - previous_count} unique usernames from media {media.pk}, "
+                        f"total unique usernames {len(usernames)}, "
+                        f"total likers processed {total_likers_processed}", "info", account
+                    )
+
+                    # Save usernames in batches
+                    if len(usernames) >= batch_size:
+                        try:
+                            self.store_users_enhanced(list(usernames), account, source_type, hashtag)
+                            account.users_scraped_today += len(usernames)
+                            account.save()
+                            self.logger.info(f"Saved batch of {len(usernames)} usernames for hashtag {hashtag}")
+                            send_alert(f"Saved batch of {len(usernames)} usernames for hashtag {hashtag}", "info", account)
+                            usernames.clear()
+                        except Exception as e:
+                            self.logger.error(f"Failed to save batch for hashtag {hashtag}: {e}")
+                            send_alert(f"Failed to save batch for hashtag {hashtag}: {e}", "error", account)
+
                     posts_processed += 1
-                    time.sleep(random.uniform(120, 300))  # Long delay between posts
-                    if random.random() < 0.3:  # 30% chance of warm-up
+                    total_posts_processed += 1  # Increment total posts processed
+                    self.logger.info(f"Processed post {posts_processed}/{len(top_medias)} for hashtag {hashtag}")
+                    send_alert(f"Processed post {posts_processed}/{len(top_medias)} for hashtag {hashtag}", "info", account)
+
+                    # Human-like behavior: random warm-up actions
+                    if random.random() < 0.5:
                         self._like_posts(cl, count=1)
+                        self.logger.info(f"Liked a post for warm-up on media {media.pk}")
+                        send_alert(f"Liked a post for warm-up on media {media.pk}", "info", account)
                         time.sleep(random.uniform(30, 60))
-                    if len(usernames) >= amount:
-                        break
+                    if random.random() < 0.2:
+                        self._like_posts(cl, count=random.randint(3, 7))
+                        self.logger.info(f"Fetched timeline for warm-up")
+                        send_alert(f"Fetched timeline for warm-up", "info", account)
+                        time.sleep(random.uniform(20, 40))
+                    if random.random() < 0.1:
+                        self._browse_hashtags(cl, count=random.randint(2, 4))
+                        self.logger.info(f"Followed a random user for warm-up")
+                        send_alert(f"Followed a random user for warm-up", "info", account)
+                        time.sleep(random.uniform(40, 80))
+
+                    time.sleep(random.uniform(120, 300))
+
                 except Exception as e:
                     self.logger.warning(f"Failed to process media {media.pk}: {e}")
+                    send_alert(f"Failed to process media {media.pk}: {e}", "warning", account)
+                    continue
+
                 # Fetch more posts if needed
-                if len(usernames) < amount * 0.5 and posts_processed >= num_posts and num_posts < max_posts:
-                    self.logger.info(f"Low yield, fetching {max_posts - num_posts} more posts")
+                if posts_processed >= num_posts and num_posts < max_posts:
+                    self.logger.info(f"Fetching {max_posts - num_posts} more posts")
+                    send_alert(f"Fetching {max_posts - num_posts} more posts", "info", account)
                     num_posts = max_posts
-                    top_medias += cl.hashtag_medias_top(hashtag, max_posts - posts_processed)[posts_processed:]
-            if not usernames and not self._validate_hashtag(cl, hashtag):
+                    additional_medias = cl.hashtag_medias_top(hashtag, max_posts - posts_processed)
+                    random.shuffle(additional_medias)
+                    top_medias += additional_medias[posts_processed:]
+                    self.logger.info(f"Added {len(additional_medias)} more posts, total {len(top_medias)} posts")
+                    send_alert(f"Added {len(additional_medias)} more posts, total {len(top_medias)} posts", "info", account)
+
+            # Save any remaining usernames
+            if usernames:
+                try:
+                    self.store_users_enhanced(list(usernames), account, source_type, hashtag)
+                    account.users_scraped_today += len(usernames)
+                    account.save()
+                    self.logger.info(f"Saved final batch of {len(usernames)} usernames for hashtag {hashtag}")
+                    send_alert(f"Saved final batch of {len(usernames)} usernames for hashtag {hashtag}", "info", account)
+                except Exception as e:
+                    self.logger.error(f"Failed to save final batch for hashtag {hashtag}: {e}")
+                    send_alert(f"Failed to save final batch for hashtag {hashtag}: {e}", "error", account)
+
+            if not account.users_scraped_today and not self._validate_hashtag(cl, hashtag):
                 self.logger.warning(f"Invalid or inaccessible hashtag: {hashtag}")
+                send_alert(f"Invalid or inaccessible hashtag: {hashtag}", "warning", account)
+
+            self.logger.info(
+                f"Completed scraping for hashtag {hashtag}: "
+                f"{account.users_scraped_today} total usernames saved, "
+                f"{total_likers_processed} total likers processed, "
+                f"{total_posts_processed} total posts processed"
+            )
+            send_alert(
+                f"Completed scraping for hashtag {hashtag}: "
+                f"{account.users_scraped_today} total usernames saved, "
+                f"{total_likers_processed} total likers processed, "
+                f"{total_posts_processed} total posts processed", "info", account
+            )
+
         except Exception as e:
             self.logger.error(f"Failed to scrape hashtag {hashtag}: {e}")
-        return usernames
+            send_alert(f"Failed to scrape hashtag {hashtag}: {e}", "error", account)
+            if usernames:
+                try:
+                    self.store_users_enhanced(list(usernames), account, source_type, hashtag)
+                    account.users_scraped_today += len(usernames)
+                    account.save()
+                    self.logger.info(f"Saved {len(usernames)} usernames before error for hashtag {hashtag}")
+                    send_alert(f"Saved {len(usernames)} usernames before error for hashtag {hashtag}", "info", account)
+                except Exception as e:
+                    self.logger.error(f"Failed to save usernames before error for hashtag {hashtag}: {e}")
+                    send_alert(f"Failed to save usernames before error for hashtag {hashtag}: {e}", "error", account)
 
-    def _scrape_search(self, cl, query, amount):
-        """Fallback search method"""
+        return []  # Return empty list since saving is handled internally
+
+    def _scrape_search(self, cl, query, amount, account):
+        """Fallback search method with batch saving and optimized delays"""
         usernames = set()
+        batch_size = getattr(settings, 'SCRAPING_BATCH_SIZE', 1000)
+        total_users_processed = 0
         try:
+            self.logger.info(f"Scraping users for search query {query}, targeting {amount} users")
+            send_alert(f"Scraping users for search query {query}, targeting {amount} users", "info", account)
+
             results = cl.search_users(query)
             for user in results[:amount]:
-                if user.username:
-                    usernames.add(user.username)
-                    time.sleep(random.uniform(20, 70))
+                try:
+                    if user.username:
+                        usernames.add(user.username)
+                        total_users_processed += 1
+                        self.logger.info(
+                            f"Added username {user.username} for query {query}, "
+                            f"total unique usernames {len(usernames)}, "
+                            f"total users processed {total_users_processed}"
+                        )
+                        send_alert(
+                            f"Added username {user.username} for query {query}, "
+                            f"total unique usernames {len(usernames)}, "
+                            f"total users processed {total_users_processed}", "info", account
+                        )
+
+                        # Save usernames in batches
+                        if len(usernames) >= batch_size:
+                            try:
+                                self.store_users_enhanced(list(usernames), account, "search", query)
+                                account.users_scraped_today += len(usernames)
+                                account.save()
+                                self.logger.info(f"Saved batch of {len(usernames)} usernames for query {query}")
+                                send_alert(f"Saved batch of {len(usernames)} usernames for query {query}", "info",
+                                           account)
+                                usernames.clear()
+                                # Add delay after batch save to pace potential API/database operations
+                                time.sleep(random.uniform(5, 15))
+                            except Exception as e:
+                                self.logger.error(f"Failed to save batch for query {query}: {e}")
+                                send_alert(f"Failed to save batch for query {query}: {e}", "error", account)
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to process user for query {query}: {e}")
+                    send_alert(f"Failed to process user for query {query}: {e}", "warning", account)
+                    continue
+
+            # Save any remaining usernames
+            if usernames:
+                try:
+                    self.store_users_enhanced(list(usernames), account, "search", query)
+                    account.users_scraped_today += len(usernames)
+                    account.save()
+                    self.logger.info(f"Saved final batch of {len(usernames)} usernames for query {query}")
+                    send_alert(f"Saved final batch of {len(usernames)} usernames for query {query}", "info", account)
+                    # Add delay after final batch save
+                    time.sleep(random.uniform(5, 15))
+                except Exception as e:
+                    self.logger.error(f"Failed to save final batch for query {query}: {e}")
+                    send_alert(f"Failed to save final batch for query {query}: {e}", "error", account)
+
+            self.logger.info(
+                f"Completed scraping for query {query}: "
+                f"{total_users_processed} total users processed, "
+                f"{len(usernames)} unique usernames collected"
+            )
+            send_alert(
+                f"Completed scraping for query {query}: "
+                f"{total_users_processed} total users processed, "
+                f"{len(usernames)} unique usernames collected", "info", account
+            )
+
         except Exception as e:
             self.logger.error(f"Search scrape failed for {query}: {e}")
-        return usernames
+            send_alert(f"Search scrape failed for {query}: {e}", "error", account)
+            if usernames:
+                try:
+                    self.store_users_enhanced(list(usernames), account, "search", query)
+                    account.users_scraped_today += len(usernames)
+                    account.save()
+                    self.logger.info(f"Saved {len(usernames)} usernames before error for query {query}")
+                    send_alert(f"Saved {len(usernames)} usernames before error for query {query}", "info", account)
+                    # Add delay after error save
+                    time.sleep(random.uniform(5, 15))
+                except Exception as e:
+                    self.logger.error(f"Failed to save usernames before error for query {query}: {e}")
+                    send_alert(f"Failed to save usernames before error for query {query}: {e}", "error", account)
+
+        return []  # Return empty list since saving is handled internally
 
     def _calculate_scrape_amount(self, account, requested_amount):
         """Calculate safe scraping amount"""
@@ -270,10 +472,13 @@ class InstagramScraper:
             return info.media_count > 0
         except Exception as e:
             self.logger.warning(f"Invalid hashtag {hashtag}: {e}")
+            send_alert(f"Invalid hashtag {hashtag}: {e}", "warning")
             return False
 
     def store_users_enhanced(self, usernames, account, source_type, source_value):
         """Store minimal user data in bulk and queue detailed enrichment"""
+        from .tasks import enrich_user_details_task
+
         users_to_create = []
         skipped_count = 0
         for username in usernames:
@@ -285,19 +490,23 @@ class InstagramScraper:
                     source_type=source_type,
                     source_value=source_value,
                     is_active=True,  # Assume active until proven otherwise
-                    details_fetched=False  # Mark as not enriched
+                    details_fetched=False,  # Mark as not enriched
+                    is_private=False  # Initialize as not private
                 ))
             except Exception as e:
                 self.logger.error(f"Failed to prepare user {username}: {e}")
+                send_alert(f"Failed to prepare user {username}: {e}", "error", account)
                 skipped_count += 1
 
         if users_to_create:
             ScrapedUser.objects.bulk_create(users_to_create, ignore_conflicts=True)
             self.logger.info(f"Stored {len(users_to_create)} users, skipped {skipped_count}")
+            send_alert(f"Stored {len(users_to_create)} users, skipped {skipped_count}", "info", account)
             # Queue enrichment task
-            # enrich_user_details_task.delay(account.id, source_type, source_value)
+            enrich_user_details_task.delay()
         else:
             self.logger.info(f"No users stored, skipped {skipped_count}")
+            send_alert(f"No users stored, skipped {skipped_count}", "info", account)
 
     def _get_user_detailed_info(self, cl, username):
         """Get user info without media calls"""
@@ -315,8 +524,38 @@ class InstagramScraper:
                 'last_post_date': last_post_date,
                 'is_active': is_active,
             }
-        except (UserNotFound, PrivateError):
+        except PrivateError:
+            self.logger.info(f"User {username} is private, skipping")
+            send_alert(f"User {username} is private, skipping", "info")
+            # Mark user as private and inactive to prevent future attempts
+            ScrapedUser.objects.filter(username=username).update(
+                is_private=True,
+                is_active=False,
+                failure_reason="Private account"
+            )
+            return None
+        except UserNotFound:
+            self.logger.info(f"User {username} not found, skipping")
+            send_alert(f"User {username} not found, skipping", "info")
+            ScrapedUser.objects.filter(username=username).update(
+                is_active=False,
+                failure_reason="User not found"
+            )
+            return None
+        except ClientError as e:
+            if "401" in str(e).lower():
+                self.logger.info(f"User {username} is private (401 error), skipping")
+                send_alert(f"User {username} is private (401 error), skipping", "info")
+                ScrapedUser.objects.filter(username=username).update(
+                    is_private=True,
+                    is_active=False,
+                    failure_reason="Private account (401 error)"
+                )
+                return None
+            self.logger.error(f"Error getting user info for {username}: {e}")
+            send_alert(f"Error getting user info for {username}: {e}", "error")
             return None
         except Exception as e:
             self.logger.error(f"Error getting user info for {username}: {e}")
+            send_alert(f"Error getting user info for {username}: {e}", "error")
             return None

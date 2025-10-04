@@ -1,0 +1,150 @@
+{% extends 'dmbot/base.html' %}
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Sent Messages</h1>
+            <p class="mt-1 text-sm text-gray-500">View all direct messages sent to users</p>
+        </div>
+        <a href="{% url 'status' %}" class="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+            Back to Dashboard
+        </a>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <form method="get" class="flex gap-2">
+            <div class="flex-1 relative">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                <input type="text" name="search" value="{{ search_query }}" placeholder="Search by recipient, content, or account..." class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                Search
+            </button>
+            {% if search_query %}
+            <a href="{% url 'sent_messages' %}" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
+                Clear
+            </a>
+            {% endif %}
+        </form>
+        {% if search_query %}
+        <p class="mt-2 text-sm text-gray-600">
+            Searching for: <span class="font-semibold text-gray-900">"{{ search_query }}"</span>
+        </p>
+        {% endif %}
+    </div>
+
+    <!-- Messages Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {% if messages %}
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <p class="text-sm text-gray-700">
+                Showing <span class="font-semibold">{{ messages.start_index }}</span> to <span class="font-semibold">{{ messages.end_index }}</span> of <span class="font-semibold">{{ messages.paginator.count }}</span> messages
+                {% if search_query %}<span class="text-gray-500">(filtered)</span>{% endif %}
+            </p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recipient</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sent At</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sender Account</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Response</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for message in messages %}
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">@{{ message.recipient_user.username }}</td>
+                        <td class="px-6 py-4 text-sm text-gray-700 max-w-md truncate">{{ message.message }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ message.sent_at|date:"Y-m-d H:i" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ message.sender_account.username }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if message.recipient_user.dm_response_received %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                Response Received
+                            </span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">No response</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <!-- Pagination -->
+        {% if messages.paginator.num_pages > 1 %}
+        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    Page <span class="font-semibold">{{ messages.number }}</span> of <span class="font-semibold">{{ messages.paginator.num_pages }}</span>
+                </div>
+                <nav class="flex items-center space-x-2">
+                    {% if messages.has_previous %}
+                    <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        First
+                    </a>
+                    <a href="?page={{ messages.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Previous
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        First
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Previous
+                    </span>
+                    {% endif %}
+                    {% if messages.has_next %}
+                    <a href="?page={{ messages.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Next
+                    </a>
+                    <a href="?page={{ messages.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        Last
+                    </a>
+                    {% else %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Next
+                    </span>
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                        Last
+                    </span>
+                    {% endif %}
+                </nav>
+            </div>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="px-6 py-8 text-center">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">
+                {% if search_query %}
+                    No messages found matching "{{ search_query }}"
+                {% else %}
+                    No messages sent yet
+                {% endif %}
+            </p>
+            {% if search_query %}
+            <a href="{% url 'sent_messages' %}" class="mt-6 inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+                Clear Search
+            </a>
+            {% else %}
+            <a href="{% url 'campaign' %}" class="mt-6 inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+                Start a Campaign
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

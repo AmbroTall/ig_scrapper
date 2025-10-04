@@ -8,6 +8,18 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 import json
 
 
+STATUS_COLOR_MAP = {
+    "idle": "bg-green-100 text-green-800",
+    "scraping": "bg-blue-100 text-blue-800",
+    "sending_dms": "bg-purple-100 text-purple-800",
+    "enriching_users": "bg-yellow-100 text-yellow-800",
+    "rate_limited": "bg-orange-100 text-orange-800",
+    "error": "bg-red-100 text-red-800",
+    "warming_up": "bg-teal-100 text-teal-800",
+    "banned": "bg-gray-800 text-white",
+    "flagged": "bg-pink-100 text-pink-800",
+}
+
 class Account(models.Model):
     username = models.CharField(max_length=255, unique=True)
     secret_key = models.CharField(max_length=255, null=True, blank=True)  # 🔑 NEW FIELD
@@ -22,6 +34,7 @@ class Account(models.Model):
             ("idle", "Idle"),
             ("scraping", "Scraping"),
             ("sending_dms", "Sending DMs"),
+            ("enriching_users", "Enriching Users"),
             ("rate_limited", "Rate Limited"),
             ("error", "Error"),
             ("warming_up", "Warming Up"),
@@ -59,6 +72,9 @@ class Account(models.Model):
     last_action_time = models.DateTimeField(null=True, blank=True)
     actions_this_hour = models.IntegerField(default=0)
     hour_reset = models.DateTimeField(default=timezone.now)
+
+    def get_status_color(self):
+        return STATUS_COLOR_MAP.get(self.status, "bg-gray-100 text-gray-800")
 
     def reset_daily_counters(self):
         """Reset daily counters if it's a new day"""
@@ -119,6 +135,7 @@ class ScrapedUser(models.Model):
     # Activity Analysis
     last_post_date = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    is_private = models.BooleanField(default=False)
     engagement_rate = models.FloatField(default=0.0)
 
     # Classification
@@ -206,3 +223,21 @@ class Alert(models.Model):
 
     def __str__(self):
         return f"[{self.severity.upper()}] {self.message[:50]}..."
+
+
+class DMLog(models.Model):
+    sender_account = models.ForeignKey(
+        "Account",  # or whatever your account model is
+        on_delete=models.CASCADE,
+        related_name="dm_logs"
+    )
+    recipient_user = models.ForeignKey(
+        "ScrapedUser",  # or your target user model
+        on_delete=models.CASCADE,
+        related_name="received_dms"
+    )
+    message = models.TextField()
+    sent_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"DM from {self.sender_account.username} to {self.recipient_user.username} at {self.sent_at}"
