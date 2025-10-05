@@ -880,7 +880,7 @@ class InstagramScraper:
                                    account)
                         cache.set(cache_key, True, timeout=60)
                     # Queue enrichment task for saved users
-                    # enrich_user_details_task.delay([user.user_id for user in users_to_create])
+                    enrich_user_details_task.delay([user.user_id for user in users_to_create])
                 else:
                     self.logger.info(f"No users stored, skipped {skipped_count} for {source_value}")
                     cache_key = f"alert_store_users_{source_value}_{account.id}"

@@ -8,6 +8,7 @@ from celery.result import AsyncResult
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
+from django.db import transaction
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import render, redirect
@@ -194,44 +195,47 @@ class BotActivityView(View):
 class StatusView(View):
     def get(self, request):
         # Fetch accounts and campaigns with ordering
-        accounts = Account.objects.all().order_by('-last_active')  # Order by last_active descending
-        accounts_qs = Account.objects.filter(
-            warmed_up=True,
-            health_score__gte=50
-        ).count()
-        campaigns = DMCampaign.objects.select_related('template').all().order_by('-created_at')  # Order by created_at descending
-        templates = DMTemplate.objects.filter(active=True)
-        alerts = Alert.objects.filter(severity__in=['error', 'warning', 'critical']).order_by('-timestamp')[:5]
-        pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
-        enriched_users = ScrapedUser.objects.filter(details_fetched=True).count()
+        with transaction.atomic():
+            accounts = Account.objects.all().order_by('-last_active')  # Order by last_active descending
+            accounts_count = accounts.count()  # Get total accounts count
+            campaigns = DMCampaign.objects.select_related('template').all().order_by('-created_at')  # Order by created_at descending
+            campaigns_count = campaigns.count()  # Get total campaigns count
+            templates = DMTemplate.objects.filter(active=True)
+            alerts = Alert.objects.filter(severity__in=['error', 'warning', 'critical']).order_by('-timestamp')[:5]
+            pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
+            enriched_users = ScrapedUser.objects.filter(details_fetched=True).count()
 
-        account_search = request.GET.get('account_search', '')
-        campaign_search = request.GET.get('campaign_search', '')
+            account_search = request.GET.get('account_search', '')
+            campaign_search = request.GET.get('campaign_search', '')
 
-        if account_search:
-            accounts = accounts.filter(
-                Q(username__icontains=account_search) |
-                Q(status__icontains=account_search)
-            )
-        if campaign_search:
-            campaigns = campaigns.filter(
-                Q(name__icontains=campaign_search) |
-                Q(template__name__icontains=campaign_search)
-            )
+            if account_search:
+                accounts = accounts.filter(
+                    Q(username__icontains=account_search) |
+                    Q(status__icontains=account_search)
+                )
+                accounts_count = accounts.count()  # Update count after filtering
+            if campaign_search:
+                campaigns = campaigns.filter(
+                    Q(name__icontains=campaign_search) |
+                    Q(template__name__icontains=campaign_search)
+                )
+                campaigns_count = campaigns.count()  # Update count after filtering
 
-        # Paginate only if object count > 5
-        accounts_paginator = Paginator(accounts, 5) if accounts.count() > 5 else None
-        campaigns_paginator = Paginator(campaigns, 5) if campaigns.count() > 5 else None
+            # Paginate only if object count > 5
+            accounts_paginator = Paginator(accounts, 5) if accounts_count > 5 else None
+            campaigns_paginator = Paginator(campaigns, 5) if campaigns_count > 5 else None
 
-        accounts_page = request.GET.get('accounts_page', 1)
-        campaigns_page = request.GET.get('campaigns_page', 1)
+            accounts_page = request.GET.get('accounts_page', 1)
+            campaigns_page = request.GET.get('campaigns_page', 1)
 
-        accounts_paginated = accounts_paginator.get_page(accounts_page) if accounts_paginator else accounts
-        campaigns_paginated = campaigns_paginator.get_page(campaigns_page) if campaigns_paginator else campaigns
+            accounts_paginated = accounts_paginator.get_page(accounts_page) if accounts_paginator else accounts
+            campaigns_paginated = campaigns_paginator.get_page(campaigns_page) if campaigns_paginator else campaigns
+
         return render(request, 'dmbot/status.html', {
             'accounts': accounts_paginated,
-            'accounts_qs': accounts_qs,
+            'accounts_count': accounts_count,  # Add accounts count to context
             'campaigns': campaigns_paginated,
+            'campaigns_count': campaigns_count,  # Add campaigns count to context
             'templates': templates,
             'alerts': alerts,
             'pending_enrichment': pending_enrichment,
@@ -239,6 +243,7 @@ class StatusView(View):
             'account_search': account_search,
             'campaign_search': campaign_search,
         })
+
 
 class AccountUploadView(LoginRequiredMixin, View):
     """View to handle CSV upload for Instagram accounts"""

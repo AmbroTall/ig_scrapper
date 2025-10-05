@@ -4,11 +4,13 @@ import random
 import time
 import uuid
 from datetime import timedelta
+
+from django.db import transaction
 from django.utils import timezone
 from instagrapi import Client
 from instagrapi.exceptions import ClientError, LoginRequired, ChallengeRequired
 from django.conf import settings
-from .models import Alert
+from .models import Alert, Account
 from instagrapi.mixins.challenge import ChallengeChoice
 
 def get_code_from_sms(username):
@@ -27,7 +29,8 @@ def change_password_handler(username):
     # Placeholder: Not used since challenges stop scraping
     return None
 
-def setup_client(account, retry_count=3):
+
+def setup_client(account, retry_count=2):
     """Enhanced client setup with better session management for 2000+ accounts"""
     logger = logging.getLogger(__name__)
 
@@ -64,10 +67,16 @@ def setup_client(account, retry_count=3):
             # Fresh login required
             if _perform_login(cl, account):
                 _save_session(cl, account)
-                account.update_health_score(True, 'login')
+                with transaction.atomic():
+                    account = Account.objects.select_for_update().get(id=account.id)
+                    account.update_health_score(True, 'login')
+                    account.save()
                 return cl
             else:
-                account.update_health_score(False, 'login')
+                with transaction.atomic():
+                    account = Account.objects.select_for_update().get(id=account.id)
+                    account.update_health_score(False, 'login')
+                    account.save()
 
         except Exception as e:
             logger.error(f"Setup attempt {attempt + 1} failed for {account.username}: {e}")
@@ -75,8 +84,19 @@ def setup_client(account, retry_count=3):
             if attempt == retry_count - 1:
                 send_alert(f"Client setup failed for {account.username}: {str(e)}", 'error', account)
 
-    return None
+    # After all retries fail, set account status to flagged
+    try:
+        with transaction.atomic():
+            account = Account.objects.select_for_update().get(id=account.id)
+            account.status = "flagged"
+            account.save()
+        logger.info(f"Account {account.username} flagged after {retry_count} failed setup attempts")
+        send_alert(f"Account {account.username} flagged after {retry_count} failed setup attempts", 'info', account)
+    except Exception as e:
+        logger.error(f"Failed to flag account {account.username}: {e}")
+        send_alert(f"Failed to flag account {account.username}: {e}", 'error', account)
 
+    return None
 
 def _validate_credentials(account):
     """Validate account credentials format"""
