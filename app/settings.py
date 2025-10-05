@@ -165,10 +165,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dmbot.tasks.warmup_accounts_task',
         'schedule': crontab(hour='0,12', minute=0),  # Runs at 00:00 and 12:00
     },
-    # 'classify-users': {
-    #     'task': 'dmbot.tasks.classify_users_task',
-    #     'schedule': 3600,  # Runs at 06:00 and 18:00
-    # },
+    'clean-alerts': {
+        'task': 'dmbot.tasks.clean_alerts_task',
+        'schedule': 3600,  # Runs at 06:00 and 18:00
+    },
     # 'enrich-users': {
     #     'task': 'dmbot.tasks.enrich_user_details_task',
     #     'schedule': 3600,

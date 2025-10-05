@@ -1,7 +1,7 @@
 from datetime import timedelta
-
+import logging
 import redis
-from celery import shared_task
+from celery import shared_task, current_app
 from celery.result import AsyncResult
 from django.conf import settings
 from django.db.models import Q
@@ -23,34 +23,34 @@ redis_client = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, d
 @shared_task(bind=True, ignore_result=False)
 def scrape_users_task(self, account_id, source_type, source_id, amount=None):
     lock_key = "scraping_lock"
+    account = Account.objects.get(id=account_id)
     if redis_client.get(lock_key):
         logging.warning("Scraping task already running, skipping new task")
-        Alert.objects.create(
-            message=f"Scraping task skipped: another scraping task is active",
+        send_alert(
+            message="Scraping task skipped: another scraping task is active",
             severity='warning',
-            account_id=account_id,
-            timestamp=timezone.now()
+            account=account
         )
         return {"status": "skipped", "reason": "Another scraping task is active"}
 
     try:
         # Acquire lock
         redis_client.set(lock_key, self.request.id, ex=3600)  # Lock for 1 hour
-        account = Account.objects.get(id=account_id)
-        scraper = InstagramScraper()
+        account.status = "scraping"
+        account.task_id = self.request.id  # Store task_id
+        account.save()
 
-        # Log activity start
-        alert = Alert.objects.create(
-            account=account,
+        logging.info(f"Started scraping {source_type}:{source_id} with account {account.username}")
+        send_alert(
+            message=f"Started scraping {source_type}:{source_id} with account {account.username}",
             severity='info',
-            message=f"Started scraping {source_type}:{source_id}",
-            timestamp=timezone.now()
+            account=account
         )
 
-        # Perform scraping
+        scraper = InstagramScraper()
         usernames = scraper.collect_usernames(account, source_type, source_id, amount)
 
-        # Save scraped users
+        # Save scraped users (uncomment if needed)
         # for username in usernames:
         #     ScrapedUser.objects.create(
         #         username=username,
@@ -63,23 +63,29 @@ def scrape_users_task(self, account_id, source_type, source_id, amount=None):
         account.last_active = timezone.now()
         account.actions_this_hour += 1
         account.update_health_score(action_success=True, action_type='scrape')
+        account.status = "idle"
+        account.task_id = None  # Clear task_id
         account.save()
 
-        # Update alert
-        alert.message += f"\nCompleted: {len(usernames)} usernames collected"
-        alert.severity = 'info'
-        alert.save()
+        logging.info(f"Completed: {len(usernames)} usernames collected with account {account.username}")
+        send_alert(
+            message=f"Completed: {len(usernames)} usernames collected with account {account.username}",
+            severity='info',
+            account=account
+        )
 
         return {"status": "success", "usernames_collected": len(usernames)}
 
     except Exception as e:
-        logging.error(f"Scrape task failed: {str(e)}", exc_info=True)
-        alert = Alert.objects.filter(message__contains=f"Started scraping {source_type}:{source_id}").first()
-        if alert:
-            alert.message += f"\nFailed: {str(e)}"
-            alert.severity = 'error'
-            alert.save()
+        logging.error(f"Scrape task failed for account {account_id}: {str(e)}", exc_info=True)
         account = Account.objects.get(id=account_id)
+        send_alert(
+            message=f"Scrape task failed for account {account.username}: {str(e)}",
+            severity='error',
+            account=account
+        )
+        account.status = "idle"
+        account.task_id = None  # Clear task_id
         account.update_health_score(action_success=False, action_type='scrape')
         account.save()
         raise
@@ -96,13 +102,20 @@ def send_dms_task(campaign_id, max_dms_per_account=15):
     except Exception as e:
         logging.error(f"DM campaign {campaign_id} failed: {e}")
 
-@shared_task(rate_limit='200/h')
-def     enrich_user_details_task():
+@shared_task(bind=True, rate_limit='200/h')
+def enrich_user_details_task(self):
     """Fetch detailed metadata for users in batches using any idle account"""
-    logger = logging.getLogger(__name__)
-    logger.info("Starting enrich_user_details_task")
+    lock_key = "enrichment_lock"
+    if redis_client.get(lock_key):
+        logging.warning("Enrichment task already running, skipping new task")
+        send_alert("Enrichment task skipped: another enrichment task is active", "warning")
+        return 0
+
     try:
-        # Select idle, warmed-up accounts
+        redis_client.set(lock_key, self.request.id, ex=3600)  # Lock for 1 hour
+        logging.info("Starting enrich_user_details_task")
+        send_alert("Starting enrich_user_details_task", "info")
+
         accounts_qs = Account.objects.filter(
             status='idle',
             warmed_up=True,
@@ -110,9 +123,8 @@ def     enrich_user_details_task():
         )
 
         count = accounts_qs.count()
-
         if count <= 1:
-            accounts = accounts_qs  # use all if only 1
+            accounts = accounts_qs
         elif count == 2:
             accounts = accounts_qs[:1]
         elif count == 3:
@@ -120,9 +132,12 @@ def     enrich_user_details_task():
         else:
             accounts = accounts_qs[: count // 2]
 
-        logger.info(f"Found {accounts.count()} idle accounts for enrichment")
+        logging.info(f"Found {accounts.count()} idle accounts for enrichment")
+        send_alert(f"Found {accounts.count()} idle accounts for enrichment", "info")
+
         if not accounts:
-            logger.warning("No idle, warmed-up accounts available for enrichment")
+            logging.warning("No idle, warmed-up accounts available for enrichment")
+            send_alert("No idle, warmed-up accounts available for enrichment", "warning")
             return 0
 
         updated_count = 0
@@ -131,30 +146,34 @@ def     enrich_user_details_task():
 
         for account in accounts:
             if not account.can_scrape():
-                logger.info(f"Account {account.username} cannot enrich users (health: {account.health_score}%)")
+                logging.info(f"Account {account.username} cannot enrich users (health: {account.health_score}%)")
+                send_alert(f"Account {account.username} cannot enrich users (health: {account.health_score}%)", "info", account)
                 continue
 
             cl = setup_client(account)
             if not cl:
-                logger.error(f"Failed to setup client for {account.username}")
+                logging.error(f"Failed to setup client for {account.username}")
+                send_alert(f"Failed to setup client for {account.username}", "error", account)
                 account.update_health_score(False, "scrape")
                 account.save()
                 continue
 
-            # Fetch users for this account, apply filters before slicing
             user_batch = ScrapedUser.objects.filter(
                 account=account,
                 details_fetched=False,
                 failure_reason__isnull=True
             )[:batch_size]
-            logger.info(f"Processing {user_batch.count()} users for account {account.username}")
-            if not user_batch:
-                logger.info(f"No users to enrich for account {account.username}")
-                continue
+            logging.info(f"Processing {user_batch.count()} users for account {account.username}")
+            send_alert(f"Processing {user_batch.count()} users for account {account.username}", "info", account)
 
+            if not user_batch:
+                logging.info(f"No users to enrich for account {account.username}")
+                send_alert(f"No users to enrich for account {account.username}", "info", account)
+                continue
 
             try:
                 account.status = "enriching_users"
+                account.task_id = self.request.id  # Store task_id
                 account.save()
                 scraper = InstagramScraper()
                 for user in user_batch:
@@ -166,7 +185,8 @@ def     enrich_user_details_task():
                             user.details_fetched = True
                             user.save()
                             skipped_count += 1
-                            logger.warning(f"No data for user {user.username}")
+                            logging.warning(f"No data for user {user.username}")
+                            send_alert(f"No data for user {user.username}", "warning", account)
                             continue
 
                         user.user_id = user_data.get("user_id")
@@ -179,20 +199,23 @@ def     enrich_user_details_task():
                         user.details_fetched = True
                         user.save()
                         updated_count += 1
-                        logger.info(f"Enriched user {user.username} with account {account.username}")
+                        logging.info(f"Enriched user {user.username} with account {account.username}")
+                        send_alert(f"Enriched user {user.username} with account {account.username}", "info", account)
 
                         time.sleep(random.uniform(25, 30))
                         if updated_count % 10 == 0:
                             time.sleep(random.uniform(120, 300))
 
                     except RateLimitError:
-                        logger.warning(f"Rate limit hit for {account.username} during enrichment")
-                        account.status = 'rate_limited'
-                        account.save()
+                        logging.warning(f"Rate limit hit for {account.username} during enrichment")
                         send_alert(f"Rate limit hit for {account.username} during enrichment", "warning", account)
+                        account.status = 'rate_limited'
+                        account.task_id = None  # Clear task_id
+                        account.save()
                         break
                     except ClientError as e:
-                        logger.error(f"Failed to enrich user {user.username}: {e}")
+                        logging.error(f"Failed to enrich user {user.username}: {e}")
+                        send_alert(f"Failed to enrich user {user.username}: {e}", "error", account)
                         user.failure_reason = str(e)
                         user.details_fetched = True
                         user.save()
@@ -201,11 +224,13 @@ def     enrich_user_details_task():
                             account.status = 'error'
                             account.login_failures += 1
                             account.last_login_failure = timezone.now()
+                            account.task_id = None  # Clear task_id
                             account.save()
                             send_alert(f"Challenge required for {account.username}", "error", account)
                             break
                     except Exception as e:
-                        logger.error(f"Unexpected error enriching user {user.username}: {e}", exc_info=True)
+                        logging.error(f"Unexpected error enriching user {user.username}: {e}", exc_info=True)
+                        send_alert(f"Unexpected error enriching user {user.username}: {e}", "error", account)
                         user.failure_reason = str(e)
                         user.details_fetched = True
                         user.save()
@@ -215,44 +240,49 @@ def     enrich_user_details_task():
                 account.last_active = timezone.now()
                 account.status = "idle"
                 account.update_health_score(True, "scrape")
+                account.task_id = None  # Clear task_id
                 account.save()
                 time.sleep(random.uniform(60, 120))
 
             except Exception as e:
+                logging.error(f"Enrichment failed for account {account.username}: {e}", exc_info=True)
+                send_alert(f"Enrichment failed for account {account.username}: {e}", "error", account)
                 account.status = "idle"
-                account.save()
-                logger.error(f"Enrichment failed for account {account.username}: {e}", exc_info=True)
-                account.status = "error"
+                account.task_id = None  # Clear task_id
                 account.update_health_score(False, "scrape")
                 account.save()
-                send_alert(f"Enrichment failed for {account.username}: {str(e)}", "error", account)
                 continue
 
-        logger.info(f"Enriched {updated_count} users, skipped {skipped_count}")
+        logging.info(f"Enriched {updated_count} users, skipped {skipped_count}")
+        send_alert(f"Enriched {updated_count} users, skipped {skipped_count}", "info")
 
-        # Trigger classification if users were enriched
         if updated_count > 0:
-            logger.info("Queuing classify_users_task")
+            logging.info("Queuing classify_users_task")
+            send_alert("Queuing classify_users_task", "info")
             classify_users_task.delay()
 
-        # Schedule another batch if more users remain
         if ScrapedUser.objects.filter(details_fetched=False, failure_reason__isnull=True).exists():
-            logger.info("Queuing another enrich_user_details_task")
+            logging.info("Queuing another enrich_user_details_task")
+            send_alert("Queuing another enrich_user_details_task", "info")
             enrich_user_details_task.delay()
 
         return updated_count
+
     except Exception as e:
-        logger.error(f"enrich_user_details_task failed: {e}", exc_info=True)
+        logging.error(f"enrich_user_details_task failed: {e}", exc_info=True)
+        send_alert(f"enrich_user_details_task failed: {e}", "error")
         raise
+
+    finally:
+        redis_client.delete(lock_key)
 
 @shared_task(rate_limit='50/h')  # Limit to 50 calls per hour to avoid API overuse
 def classify_users_task(batch_size=50):
     """Classify users for profession and country in batches"""
-    logger = logging.getLogger(__name__)
     try:
         user_filter = UserFilter()
         classified_count = user_filter.classify_users_ai(batch_size=batch_size)
-        logger.info(f"Classified {classified_count} users in batch")
+        logging.info(f"Classified {classified_count} users in batch")
 
         # Schedule another batch if more users need classification
         if ScrapedUser.objects.filter(
@@ -261,7 +291,7 @@ def classify_users_task(batch_size=50):
         ).exists():
             classify_users_task.delay(batch_size=batch_size)
     except Exception as e:
-        logger.error(f"Classification task failed: {e}")
+        logging.error(f"Classification task failed: {e}")
 
 @shared_task
 def warmup_accounts_task():
@@ -334,4 +364,105 @@ def cancel_task(task_id):
             timestamp=timezone.now()
         )
         return {"status": "failed", "error": str(e)}
+
+@shared_task(bind=True)
+def clean_alerts_task(self):
+    """Delete old Alert entries when count reaches 1000"""
+    lock_key = "clean_alerts_lock"
+
+    if redis_client.get(lock_key):
+        logging.warning("Clean alerts task already running, skipping new task")
+        send_alert("Clean alerts task skipped: another clean alerts task is active", "warning")
+        return {"status": "skipped", "reason": "Another clean alerts task is active"}
+
+    try:
+        redis_client.set(lock_key, self.request.id, ex=3600)  # Lock for 1 hour
+        logging.info("Starting clean_alerts_task")
+        send_alert("Starting clean_alerts_task", "info")
+
+        alert_count = Alert.objects.count()
+        if alert_count < 1000:
+            logging.info(f"Alert count ({alert_count}) below 1000, no deletion needed")
+            send_alert(f"Alert count ({alert_count}) below 1000, no deletion needed", "info")
+            return {"status": "success", "deleted": 0}
+
+        # Delete oldest alerts to bring count below 1000
+        excess_count = alert_count - 900  # Keep 900 to leave buffer
+        alerts_to_delete = Alert.objects.order_by('timestamp')[:excess_count]
+        deleted_count = alerts_to_delete.count()
+        alerts_to_delete.delete()
+
+        logging.info(f"Deleted {deleted_count} old alerts")
+        send_alert(f"Deleted {deleted_count} old alerts", "info")
+        return {"status": "success", "deleted": deleted_count}
+
+    except Exception as e:
+        logging.error(f"clean_alerts_task failed: {str(e)}", exc_info=True)
+        send_alert(f"clean_alerts_task failed: {str(e)}", "error")
+        raise
+
+    finally:
+        redis_client.delete(lock_key)
+
+@shared_task(bind=True)
+def reset_stale_accounts_task(self):
+    """Check accounts with non-idle status and reset to idle if task_id is not in Celery queue."""
+    lock_key = "reset_stale_accounts_lock"
+    if redis_client.get(lock_key):
+        logging.warning("Reset stale accounts task already running, skipping")
+        send_alert("Reset stale accounts task skipped: another instance is active", "warning")
+        return 0
+
+    try:
+        redis_client.set(lock_key, self.request.id, ex=3600)
+        logging.info("Starting reset_stale_accounts_task")
+        send_alert("Starting reset_stale_accounts_task", "info")
+
+        # Get non-idle accounts
+        non_idle_accounts = Account.objects.exclude(status="idle")
+        if not non_idle_accounts:
+            logging.info("No non-idle accounts found")
+            send_alert("No non-idle accounts found", "info")
+            return 0
+
+        # Inspect Celery queue
+        inspector = current_app.control.inspect()
+        active_tasks = inspector.active() or {}
+        scheduled_tasks = inspector.scheduled() or {}
+        reserved_tasks = inspector.reserved() or {}
+        task_ids = set()
+        for worker, tasks in active_tasks.items():
+            task_ids.update(task['id'] for task in tasks)
+        for worker, tasks in scheduled_tasks.items():
+            task_ids.update(task['id'] for task in tasks)
+        for worker, tasks in reserved_tasks.items():
+            task_ids.update(task['id'] for task in tasks)
+
+        reset_count = 0
+        for account in non_idle_accounts:
+            if account.task_id and account.task_id not in task_ids:
+                logging.info(f"Resetting account {account.username}: status={account.status}, task_id={account.task_id}")
+                send_alert(f"Resetting account {account.username}: status={account.status}, task_id={account.task_id}", "info", account)
+                account.status = "idle"
+                account.task_id = None
+                account.save()
+                reset_count += 1
+            elif not account.task_id:
+                logging.info(f"Resetting account {account.username}: status={account.status}, no task_id")
+                send_alert(f"Resetting account {account.username}: status={account.status}, no task_id", "info", account)
+                account.status = "idle"
+                account.save()
+                reset_count += 1
+
+        logging.info(f"Completed reset_stale_accounts_task: {reset_count} accounts reset to idle")
+        send_alert(f"Completed reset_stale_accounts_task: {reset_count} accounts reset to idle", "info")
+        return reset_count
+
+    except Exception as e:
+        logging.error(f"Error in reset_stale_accounts_task: {e}", exc_info=True)
+        send_alert(f"Error in reset_stale_accounts_task: {e}", "error")
+        return 0
+
+    finally:
+        redis_client.delete(lock_key)
 

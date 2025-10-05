@@ -1,6 +1,11 @@
+import logging
 import re
 
-from celery import Celery
+import redis
+from celery import Celery, current_app
+from celery.app.control import Inspect
+from celery.result import AsyncResult
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 from django.db.models import Q
@@ -12,11 +17,12 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate, DMLog
-from .tasks import scrape_users_task, send_dms_task, cancel_task
+from .tasks import scrape_users_task, send_dms_task, cancel_task, redis_client
 import csv
 from io import TextIOWrapper
 import random
 
+from .utils import send_alert
 
 # Initialize Celery app (adjust this based on your Celery configuration)
 app = Celery('app', broker='redis://localhost:6379/0')  # Update with your broker URL
@@ -67,13 +73,13 @@ class InputFormView(LoginRequiredMixin, View):
                         scrape_users_task.delay(account.id, "hashtag", hashtag)
                         first_account = False
                     else:
-                        delay = random.randint(300, 900)  # 5–15 min
+                        delay = random.randint(50, 150)  # 5–15 min
                         scrape_users_task.apply_async((account.id, "hashtag", hashtag), countdown=delay)
                 for location in locations:
-                    delay = random.randint(300, 900)
+                    delay = random.randint(150, 300)
                     scrape_users_task.apply_async((account.id, "location", location), countdown=delay)
                 for tag in tags:
-                    delay = random.randint(300, 900)
+                    delay = random.randint(150, 300)
                     scrape_users_task.apply_async((account.id, "tags", tag), countdown=delay)
 
             messages.success(request, "Scraping tasks scheduled successfully.")
@@ -90,7 +96,7 @@ class BotActivityView(View):
 
         # Fetch active Celery tasks
         processed_activities = []
-        inspector = app.control.inspect()
+        inspector = current_app.control.inspect()
         try:
             active_tasks = inspector.active() or {}  # Get active tasks from all workers
             for worker, tasks in active_tasks.items():
@@ -101,13 +107,12 @@ class BotActivityView(View):
                     # Extract account username from task args if available
                     username = 'System'
                     try:
-                        # Adjust based on your task args structure, e.g., (account_id, campaign_id)
                         if args and isinstance(args, (list, tuple)) and len(args) > 0:
                             account_id = args[0]  # Adjust based on your task args
                             account = Account.objects.filter(id=account_id).first()
                             username = account.username if account else 'System'
                     except Exception:
-                        pass  # Fallback to 'System' if parsing fails
+                        pass
                     # Apply search filter
                     if search_query:
                         if not (search_query.lower() in task_name.lower() or
@@ -117,11 +122,11 @@ class BotActivityView(View):
                         'task_id': task_id,
                         'message': f"Running task: {task_name}",
                         'username': username,
-                        'timestamp': task.get('time_start', None)  # Unix timestamp from Celery
+                        'timestamp': task.get('time_start', None)
                     })
         except Exception as e:
-            print(f"Error fetching active tasks: {e}")
-            processed_activities = []
+            logging.error(f"Error fetching active tasks: {e}")
+            send_alert(f"Error fetching active tasks: {e}", "error")
 
         # Paginate processed activities
         paginator = Paginator(processed_activities, 10)
@@ -134,28 +139,66 @@ class BotActivityView(View):
         })
 
     def post(self, request):
-        task_id = request.POST.get('task_id')
-        if task_id:
-            try:
-                # Directly revoke the task
-                app.control.revoke(task_id, terminate=True)
-                if request.is_ajax():
-                    return JsonResponse({'status': 'cancelled', 'message': f'Task {task_id} cancelled'})
-                messages.success(request, f"Task {task_id} cancelled successfully.")
-            except Exception as e:
-                if request.is_ajax():
-                    return JsonResponse({'status': 'failed', 'error': str(e)})
-                messages.error(request, f"Failed to cancel task: {str(e)}")
-        else:
-            if request.is_ajax():
-                return JsonResponse({'status': 'failed', 'error': 'No task_id provided'})
-            messages.error(request, "No task_id provided")
-        return redirect('bot_activity')
+        # if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        #     logging.warning("Non-AJAX request to BotActivityView.post")
+        #     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+        try:
+            # Handle single task cancellation
+            task_id = request.POST.get('task_id')
+            if task_id:
+                try:
+                    # Revoke task
+                    AsyncResult(task_id).revoke(terminate=True)
+                    logging.info(f"Task {task_id} cancelled")
+                    send_alert(f"Task {task_id} cancelled", "info")
+
+                    # Reset account status and task_id
+                    task = AsyncResult(task_id)
+                    task_name = task.name
+                    args = task.args if task.args else []
+                    if task_name == 'dmbot.tasks.scrape_users_task' and args and isinstance(args,
+                                                                                            (list, tuple)) and len(
+                            args) > 0:
+                        account_id = args[0]
+                        account = Account.objects.filter(id=account_id).first()
+                        if account:
+                            account.status = 'idle'
+                            account.task_id = None
+                            account.save()
+                            logging.info(f"Reset account {account.username} to idle after cancelling task {task_id}")
+                            send_alert(f"Reset account {account.username} to idle after cancelling task {task_id}",
+                                       "info", account)
+                        redis_client.delete("scraping_lock")  # Release lock
+                    elif task_name == 'dmbot.tasks.enrich_user_details_task':
+                        accounts = Account.objects.filter(task_id=task_id)
+                        for account in accounts:
+                            account.status = 'idle'
+                            account.task_id = None
+                            account.save()
+                            logging.info(f"Reset account {account.username} to idle after cancelling task {task_id}")
+                            send_alert(f"Reset account {account.username} to idle after cancelling task {task_id}",
+                                       "info", account)
+                        redis_client.delete("enrichment_lock")  # Release lock
+                    return redirect('/')
+                except Exception as e:
+                    logging.error(f"Failed to cancel task {task_id}: {e}")
+                    send_alert(f"Failed to cancel task {task_id}: {e}", "error")
+                    return redirect('/')
+            return redirect('/')
+        except Exception as e:
+            logging.error(f"Error in BotActivityView.post: {e}")
+            send_alert(f"Error in BotActivityView.post: {e}", "error")
+            return redirect('/')
 
 class StatusView(View):
     def get(self, request):
         # Fetch accounts and campaigns with ordering
         accounts = Account.objects.all().order_by('-last_active')  # Order by last_active descending
+        accounts_qs = Account.objects.filter(
+            warmed_up=True,
+            health_score__gte=50
+        ).count()
         campaigns = DMCampaign.objects.select_related('template').all().order_by('-created_at')  # Order by created_at descending
         templates = DMTemplate.objects.filter(active=True)
         alerts = Alert.objects.filter(severity__in=['error', 'warning', 'critical']).order_by('-timestamp')[:5]
@@ -185,9 +228,9 @@ class StatusView(View):
 
         accounts_paginated = accounts_paginator.get_page(accounts_page) if accounts_paginator else accounts
         campaigns_paginated = campaigns_paginator.get_page(campaigns_page) if campaigns_paginator else campaigns
-
         return render(request, 'dmbot/status.html', {
             'accounts': accounts_paginated,
+            'accounts_qs': accounts_qs,
             'campaigns': campaigns_paginated,
             'templates': templates,
             'alerts': alerts,

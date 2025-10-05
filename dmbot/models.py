@@ -72,6 +72,8 @@ class Account(models.Model):
     last_action_time = models.DateTimeField(null=True, blank=True)
     actions_this_hour = models.IntegerField(default=0)
     hour_reset = models.DateTimeField(default=timezone.now)
+    task_id = models.CharField(max_length=50, null=True, blank=True)  # Store Celery task UUID
+
 
     def get_status_color(self):
         return STATUS_COLOR_MAP.get(self.status, "bg-gray-100 text-gray-800")
@@ -241,3 +243,19 @@ class DMLog(models.Model):
 
     def __str__(self):
         return f"DM from {self.sender_account.username} to {self.recipient_user.username} at {self.sent_at}"
+
+class ProcessedMedia(models.Model):
+    media_id = models.CharField(max_length=100, db_index=True)  # Instagram media.pk
+    hashtag = models.CharField(max_length=255)
+    account = models.ForeignKey('Account', on_delete=models.CASCADE, related_name='processed_medias')
+    processed_at = models.DateTimeField(default=timezone.now)
+    source_type = models.CharField(max_length=50, default='hashtag')
+
+    class Meta:
+        unique_together = ('media_id', 'hashtag', 'account')  # Prevent duplicates per account and hashtag
+        indexes = [
+            models.Index(fields=['media_id', 'hashtag']),
+        ]
+
+    def __str__(self):
+        return f"{self.media_id} for {self.hashtag} by {self.account.username}"

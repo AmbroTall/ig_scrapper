@@ -25,7 +25,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-gray-600">Active Accounts</p>
-                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ accounts.paginator.count }}</p>
+                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ accounts_qs }}</p>
                 </div>
                 <div class="bg-indigo-100 rounded-lg p-3">
                     <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -93,19 +93,20 @@
         </div>
     </div>
 
+
 <!-- Latest Bot Activities -->
 <div class="bg-white rounded-xl shadow-sm border border-gray-200">
     <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-900">Latest Bot Activities</h2>
-        <a href="{% url 'bot_activity' %}" class="text-sm text-indigo-600 hover:text-indigo-700 font-medium">View All</a>
+<!--        <a href="{% url 'bot_activity' %}" class="text-sm text-indigo-600 hover:text-indigo-700 font-medium">View All</a>-->
     </div>
     <div id="activities-container" class="divide-y divide-gray-200">
         <!-- Populated by JavaScript -->
     </div>
 </div>
 
-    <!-- Real-Time Logs -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 mt-8">
+ <!-- Real-Time Logs -->
+<div class="bg-white rounded-xl shadow-sm border border-gray-200 mt-8">
         <div class="px-6 py-4 border-b border-gray-200">
             <h2 class="text-lg font-semibold text-gray-900">Real-Time Logs</h2>
         </div>
@@ -114,7 +115,8 @@
         </div>
     </div>
 
-    <!-- Alerts Section -->
+
+<!-- Alerts Section -->
 <div class="bg-white rounded-xl shadow-sm border border-gray-200">
     <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-900">Recent Alerts</h2>
@@ -169,6 +171,9 @@
         {% endif %}
     </div>
 </div>
+
+
+
 <!-- Accounts Section -->
 <div class="bg-white rounded-xl shadow-sm border border-gray-200">
     <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -512,26 +517,28 @@ function refreshActivities() {
     })
     .catch(error => console.error('Error fetching activities:', error));
 }
-
 function cancelTask(taskId) {
     if (confirm('Are you sure you want to cancel this task?')) {
-        fetch('{% url 'bot_activity' %}', {
+        fetch('{% url "bot_activity" %}', {
             method: 'POST',
             headers: {
                 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
-                'Content-Type': 'application/x-www-form-urlencoded'
+                'Content-Type': 'application/x-www-form-urlencoded',
+<!--                'X-Requested-With': 'XMLHttpRequest'   // 👈 ADD THIS LINE-->
             },
             body: `task_id=${encodeURIComponent(taskId)}`
         })
         .then(response => response.json())
         .then(data => {
-            alert(data.status === 'cancelled' ? 'Task cancelled!' : 'Cancellation failed: ' + data.error);
+            alert(data.status === 'cancelled' ? 'Task cancelled!' : 'Cancellation failed: ' + data.message);
             refreshLogs();
             refreshActivities();
         })
         .catch(error => console.error('Error cancelling task:', error));
     }
 }
+
+
 
 // Poll every 10 seconds
 setInterval(() => {
