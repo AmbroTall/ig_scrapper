@@ -124,55 +124,86 @@ class InstagramScraper:
     @rate_limit(max_calls_per_hour=100)
     def collect_usernames(self, account, source_type, source_id, amount=None):
         """Collect usernames by scraping likers of top hashtag posts"""
-        if not account.can_scrape():
-            self.logger.info(f"Account {account.username} cannot scrape (health: {account.health_score}%)")
-            send_alert(f"Account {account.username} cannot scrape (health: {account.health_score}%)", "info", account)
-            return set()
-        if not account.warmed_up:
-            self.logger.info(f"Warming up {account.username}")
-            send_alert(f"Warming up {account.username}", "info", account)
-            if not self.warm_up_account(account):
-                send_alert(f"Warm-up failed for {account.username}", "warning", account)
-                return set()
-        amount = self._calculate_scrape_amount(account, amount)
-        if amount <= 0:
-            return set()
-        cl = setup_client(account)
-        if not cl:
-            account.update_health_score(False, "scrape")
-            return set()
         usernames = set()
         try:
-            account.status = "scraping"
-            account.save()
-            if source_type == "hashtag":
-                # Saving is handled within _scrape_hashtag_likers
-                self._scrape_hashtag_likers(cl, source_id, account, source_type)
-            else:
-                usernames = self._scrape_search(cl, source_id, amount, account)
-                if usernames:
-                    account.last_active = timezone.now()
-                    account.update_health_score(True, "scrape")
-                    self.logger.info(f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}")
-                    send_alert(f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}", "info", account)
-        except RateLimitError:
-            account.status = "rate_limited"
-            account.save()
-            send_alert(f"Rate limit hit for {account.username}", "warning", account)
-            time.sleep(random.uniform(300, 600))
-        except ClientError as e:
-            self.logger.error(f"ClientError in collect_usernames: {e}")
-            send_alert(f"ClientError in collect_usernames: {e}", "error", account)
-            account.update_health_score(False, "scrape")
-            self._handle_client_error(account, e)
+            if not account.can_scrape():
+                self.logger.info(f"Account {account.username} cannot scrape (health: {account.health_score}%)")
+                send_alert(f"Account {account.username} cannot scrape (health: {account.health_score}%)", "info",
+                           account)
+                return usernames
+
+            if not account.warmed_up:
+                self.logger.info(f"Warming up {account.username}")
+                send_alert(f"Warming up {account.username}", "info", account)
+                if not self.warm_up_account(account):
+                    send_alert(f"Warm-up failed for {account.username}", "warning", account)
+                    return usernames
+
+            amount = self._calculate_scrape_amount(account, amount)
+            if amount <= 0:
+                return usernames
+
+            cl = setup_client(account)
+            if not cl:
+                with transaction.atomic():
+                    account.update_health_score(False, "scrape")
+                    account.status = "idle"
+                    account.save()
+                return usernames
+
+            try:
+                with transaction.atomic():
+                    account.status = "scraping"
+                    account.save()
+
+                if source_type == "hashtag":
+                    # Saving is handled within _scrape_hashtag_likers
+                    self._scrape_hashtag_likers(cl, source_id, account, source_type)
+                else:
+                    usernames = self._scrape_search(cl, source_id, amount, account)
+                    if usernames:
+                        with transaction.atomic():
+                            account.last_active = timezone.now()
+                            account.update_health_score(True, "scrape")
+                            account.status = "idle"
+                            account.save()
+                        self.logger.info(
+                            f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}")
+                        cache_key = f"alert_collect_usernames_{source_type}_{source_id}_{account.id}"
+                        if not cache.get(cache_key):
+                            send_alert(f"Collected and saved {len(usernames)} usernames from {source_type}:{source_id}",
+                                       "info", account)
+                            cache.set(cache_key, True, timeout=60)
+            except RateLimitError:
+                with transaction.atomic():
+                    account.status = "rate_limited"
+                    account.save()
+                send_alert(f"Rate limit hit for {account.username}", "warning", account)
+                time.sleep(random.uniform(300, 600))
+            except ClientError as e:
+                self.logger.error(f"ClientError in collect_usernames: {e}")
+                send_alert(f"ClientError in collect_usernames: {e}", "error", account)
+                with transaction.atomic():
+                    account.update_health_score(False, "scrape")
+                    account.status = "idle"
+                    account.save()
+                self._handle_client_error(account, e)
+            except Exception as e:
+                self.logger.error(f"Unexpected error: {e}", exc_info=True)
+                send_alert(f"Unexpected error: {str(e)}", "error", account)
+                with transaction.atomic():
+                    account.update_health_score(False, "scrape")
+                    account.status = "idle"
+                    account.save()
+                send_alert(f"Scraping error for {account.username}: {str(e)}", "error", account)
+
         except Exception as e:
-            self.logger.error(f"Unexpected error: {e}", exc_info=True)
-            send_alert(f"Unexpected error: {str(e)}", "error", account)
-            account.update_health_score(False, "scrape")
-            send_alert(f"Scraping error for {account.username}: {str(e)}", "error", account)
-        finally:
-            account.status = "idle"
-            account.save()
+            self.logger.error(f"Unexpected outer error in collect_usernames: {e}")
+            send_alert(f"Unexpected outer error in collect_usernames: {e}", "error", account)
+            with transaction.atomic():
+                account.status = "idle"
+                account.save()
+
         return usernames
 
     def _scrape_hashtag_likers(self, cl, hashtag, account, source_type="hashtag"):
@@ -642,56 +673,75 @@ class InstagramScraper:
         total_users_processed = 0
         try:
             self.logger.info(f"Scraping users for search query {query}, targeting {amount} users")
-            send_alert(f"Scraping users for search query {query}, targeting {amount} users", "info", account)
+            cache_key = f"alert_scrape_search_start_{query}_{account.id}"
+            if not cache.get(cache_key):
+                send_alert(f"Scraping users for search query {query}, targeting {amount} users", "info", account)
+                cache.set(cache_key, True, timeout=60)
 
             results = cl.search_users(query)
             for user in results:
                 try:
-                    if user.username:
-                        usernames.add(user.username)
+                    if user.username and user.pk:  # Ensure user_id is available
+                        usernames.add((user.username, user.pk))  # Store tuple (username, user_id)
                         total_users_processed += 1
                         self.logger.info(
-                            f"Added username {user.username} for query {query}, "
+                            f"Added username {user.username} (ID: {user.pk}) for query {query}, "
                             f"total unique usernames {len(usernames)}, "
                             f"total users processed {total_users_processed}"
                         )
-                        send_alert(
-                            f"Added username {user.username} for query {query}, "
-                            f"total unique usernames {len(usernames)}, "
-                            f"total users processed {total_users_processed}", "info", account
-                        )
+                        cache_key = f"alert_add_user_{user.pk}_{query}_{account.id}"
+                        if not cache.get(cache_key):
+                            send_alert(
+                                f"Added username {user.username} (ID: {user.pk}) for query {query}, "
+                                f"total unique usernames {len(usernames)}, "
+                                f"total users processed {total_users_processed}", "info", account
+                            )
+                            cache.set(cache_key, True, timeout=60)
 
                         # Save usernames in batches
                         if len(usernames) >= batch_size:
                             try:
-                                self.store_users_enhanced(list(usernames), account, "search", query)
-                                account.users_scraped_today += len(usernames)
-                                account.save()
-                                self.logger.info(f"Saved batch of {len(usernames)} usernames for query {query}")
-                                send_alert(f"Saved batch of {len(usernames)} usernames for query {query}", "info",
-                                           account)
-                                usernames.clear()
-                                # Add delay after batch save to pace potential API/database operations
-                                time.sleep(random.uniform(5, 15))
+                                with transaction.atomic():
+                                    saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
+                                    account.users_scraped_today += saved_count
+                                    account.save()
+                                self.logger.info(f"Saved batch of {saved_count} usernames for query {query}")
+                                cache_key = f"alert_save_batch_search_{query}_{account.id}"
+                                if not cache.get(cache_key):
+                                    send_alert(f"Saved batch of {saved_count} usernames for query {query}", "info",
+                                               account)
+                                    cache.set(cache_key, True, timeout=60)
+                                usernames.clear()  # Clear only after successful save
+                                time.sleep(random.uniform(5, 15))  # Delay after batch save
                             except Exception as e:
                                 self.logger.error(f"Failed to save batch for query {query}: {e}")
                                 send_alert(f"Failed to save batch for query {query}: {e}", "error", account)
+                                continue  # Don't clear usernames, try next batch
+
+                    if total_users_processed >= amount:
+                        break  # Respect the amount limit
 
                 except Exception as e:
                     self.logger.warning(f"Failed to process user for query {query}: {e}")
-                    send_alert(f"Failed to process user for query {query}: {e}", "warning", account)
+                    cache_key = f"alert_process_user_error_{query}_{account.id}"
+                    if not cache.get(cache_key):
+                        send_alert(f"Failed to process user for query {query}: {e}", "warning", account)
+                        cache.set(cache_key, True, timeout=60)
                     continue
 
             # Save any remaining usernames
             if usernames:
                 try:
-                    self.store_users_enhanced(list(usernames), account, "search", query)
-                    account.users_scraped_today += len(usernames)
-                    account.save()
-                    self.logger.info(f"Saved final batch of {len(usernames)} usernames for query {query}")
-                    send_alert(f"Saved final batch of {len(usernames)} usernames for query {query}", "info", account)
-                    # Add delay after final batch save
-                    time.sleep(random.uniform(5, 15))
+                    with transaction.atomic():
+                        saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
+                        account.users_scraped_today += saved_count
+                        account.save()
+                    self.logger.info(f"Saved final batch of {saved_count} usernames for query {query}")
+                    cache_key = f"alert_save_final_batch_search_{query}_{account.id}"
+                    if not cache.get(cache_key):
+                        send_alert(f"Saved final batch of {saved_count} usernames for query {query}", "info", account)
+                        cache.set(cache_key, True, timeout=60)
+                    time.sleep(random.uniform(5, 15))  # Delay after final batch save
                 except Exception as e:
                     self.logger.error(f"Failed to save final batch for query {query}: {e}")
                     send_alert(f"Failed to save final batch for query {query}: {e}", "error", account)
@@ -699,26 +749,32 @@ class InstagramScraper:
             self.logger.info(
                 f"Completed scraping for query {query}: "
                 f"{total_users_processed} total users processed, "
-                f"{len(usernames)} unique usernames collected"
+                f"{account.users_scraped_today} total users saved"
             )
-            send_alert(
-                f"Completed scraping for query {query}: "
-                f"{total_users_processed} total users processed, "
-                f"{len(usernames)} unique usernames collected", "info", account
-            )
+            cache_key = f"alert_completed_search_{query}_{account.id}"
+            if not cache.get(cache_key):
+                send_alert(
+                    f"Completed scraping for query {query}: "
+                    f"{total_users_processed} total users processed, "
+                    f"{account.users_scraped_today} total users saved", "info", account
+                )
+                cache.set(cache_key, True, timeout=60)
 
         except Exception as e:
             self.logger.error(f"Search scrape failed for {query}: {e}")
             send_alert(f"Search scrape failed for {query}: {e}", "error", account)
             if usernames:
                 try:
-                    self.store_users_enhanced(list(usernames), account, "search", query)
-                    account.users_scraped_today += len(usernames)
-                    account.save()
-                    self.logger.info(f"Saved {len(usernames)} usernames before error for query {query}")
-                    send_alert(f"Saved {len(usernames)} usernames before error for query {query}", "info", account)
-                    # Add delay after error save
-                    time.sleep(random.uniform(5, 15))
+                    with transaction.atomic():
+                        saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
+                        account.users_scraped_today += saved_count
+                        account.save()
+                    self.logger.info(f"Saved {saved_count} usernames before error for query {query}")
+                    cache_key = f"alert_save_before_error_search_{query}_{account.id}"
+                    if not cache.get(cache_key):
+                        send_alert(f"Saved {saved_count} usernames before error for query {query}", "info", account)
+                        cache.set(cache_key, True, timeout=60)
+                    time.sleep(random.uniform(5, 15))  # Delay after error save
                 except Exception as e:
                     self.logger.error(f"Failed to save usernames before error for query {query}: {e}")
                     send_alert(f"Failed to save usernames before error for query {query}: {e}", "error", account)
@@ -742,22 +798,28 @@ class InstagramScraper:
         """Handle client errors with exponential backoff"""
         error_str = str(error).lower()
         backoff_times = [300, 600, 1200]  # 5m, 10m, 20m
-        if "429" in error_str or "rate limit" in error_str:
-            account.status = "rate_limited"
-            account.save()
-            send_alert(f"Rate limit hit for {account.username}", "warning", account)
-            time.sleep(random.choice(backoff_times))
-        elif "challenge" in error_str:
-            account.status = "flagged"
-            account.save()
-            send_alert(f"Challenge required for {account.username}", "error", account)
-        elif "login" in error_str:
-            account.login_failures += 1
-            account.last_login_failure = timezone.now()
-            account.save()
-            send_alert(f"Login issue for {account.username}", "error", account)
-        else:
-            send_alert(f"Client error for {account.username}: {error_str}", "warning", account)
+        try:
+            with transaction.atomic():
+                if "429" in error_str or "rate limit" in error_str:
+                    account.status = "rate_limited"
+                    account.save()
+                    send_alert(f"Rate limit hit for {account.username}", "warning", account)
+                    time.sleep(random.choice(backoff_times))
+                elif "challenge" in error_str:
+                    account.status = "flagged"
+                    account.save()
+                    send_alert(f"Challenge required for {account.username}", "error", account)
+                elif "login" in error_str:
+                    account.login_failures += 1
+                    account.last_login_failure = timezone.now()
+                    account.save()
+                    send_alert(f"Login issue for {account.username}", "error", account)
+                else:
+                    send_alert(f"Client error for {account.username}: {error_str}", "warning", account)
+        except Exception as e:
+            self.logger.error(f"Failed to handle client error for {account.username}: {e}")
+            send_alert(f"Failed to handle client error for {account.username}: {e}", "error", account)
+
 
     def _validate_hashtag(self, cl, hashtag):
         """Validate if hashtag exists and is accessible"""

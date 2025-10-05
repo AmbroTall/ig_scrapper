@@ -7,3 +7,5 @@ app:
 results:
 transport:
 .env
+nginx.conf
+data
