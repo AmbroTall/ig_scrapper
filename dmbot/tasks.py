@@ -22,17 +22,35 @@ redis_client = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, d
 
 @shared_task(bind=True, ignore_result=False)
 def scrape_users_task(self, account_id, source_type, source_id, amount=None):
+    from django.core.cache import cache
+    import logging
+
     lock_key = "scraping_lock"
     account = Account.objects.get(id=account_id)
+    #
+    # # --- CLEAR ALL REDIS CACHE BEFORE START ---
+    # try:
+    #     redis_client.flushall()  # ⚠️ Clears everything in Redis (be careful in production)
+    #     cache.clear()  # Clears Django-level cache if using cache framework
+    #     logging.info("✅ All Redis and Django caches cleared before scraping.")
+    # except Exception as e:
+    #     logging.error(f"❌ Failed to clear cache: {e}")
+    #     send_alert(
+    #         message=f"Failed to clear cache: {e}",
+    #         severity='error',
+    #         account=account
+    #     )
+
     if redis_client.get(lock_key):
-        logging.warning("Scraping task already running, skipping new task")
+        logging.warning("Scraping task already running, terminating to start new task...")
         send_alert(
-            message="Scraping task skipped: another scraping task is active",
+            message="Scraping task scheduled: New scraping task is now active.",
             severity='warning',
             account=account
         )
-        return {"status": "skipped", "reason": "Another scraping task is active"}
+        redis_client.delete("scraping_lock")
 
+        # return {"status": "skipped", "reason": "Another scraping task is active"}
     try:
         # Acquire lock
         redis_client.set(lock_key, self.request.id, ex=3600)  # Lock for 1 hour
