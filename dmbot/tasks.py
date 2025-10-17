@@ -130,8 +130,9 @@ def send_dms_task(campaign_id, max_dms_per_account=15):
 
 @shared_task(bind=True, rate_limit="200/h")
 def enrich_user_details_task(self):
-    """Fetch detailed metadata for users in batches using any idle account"""
+    """Fetch detailed metadata for users in batches using selected or any idle account"""
     lock_key = "enrichment_lock"
+    selected_accounts_key = "enrichment_selected_accounts"
     try:
         if redis_client.get(lock_key):
             logging.warning("Enrichment task already running, skipping new task")
@@ -150,21 +151,32 @@ def enrich_user_details_task(self):
                 send_alert("Starting enrich_user_details_task", "info")
                 cache.set(cache_key, True, timeout=60)
 
-            accounts_qs = Account.objects.filter(
-                status="idle",
-                warmed_up=True,
-                health_score__gte=50
-            )
-
-            count = accounts_qs.count()
-            if count <= 1:
-                accounts = accounts_qs
-            elif count == 2:
-                accounts = accounts_qs[:1]
-            elif count == 3:
-                accounts = accounts_qs[:2]
+            # Use selected accounts if available
+            selected_ids = redis_client.lrange(selected_accounts_key, 0, -1)
+            if selected_ids:
+                accounts = Account.objects.filter(
+                    id__in=[int(aid) for aid in selected_ids],
+                    status="idle",
+                    warmed_up=True,
+                    health_score__gte=50
+                )
+                redis_client.delete(selected_accounts_key)  # Clear after use
             else:
-                accounts = accounts_qs[:count // 2]
+                accounts_qs = Account.objects.filter(
+                    status="idle",
+                    warmed_up=True,
+                    health_score__gte=50
+                )
+
+                count = accounts_qs.count()
+                if count <= 1:
+                    accounts = accounts_qs
+                elif count == 2:
+                    accounts = accounts_qs[:1]
+                elif count == 3:
+                    accounts = accounts_qs[:2]
+                else:
+                    accounts = accounts_qs[:count // 2]
 
             logging.info(f"Found {accounts.count()} idle accounts for enrichment")
             cache_key = f"alert_enrich_accounts_{self.request.id}"
@@ -208,7 +220,7 @@ def enrich_user_details_task(self):
                     continue
 
                 user_batch = ScrapedUser.objects.filter(
-                    account=account,
+                    # account=account,
                     details_fetched=False,
                     failure_reason__isnull=True
                 )[:batch_size]

@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate, DMLog
-from .tasks import scrape_users_task, send_dms_task, cancel_task, redis_client
+from .tasks import scrape_users_task, send_dms_task, cancel_task, redis_client, enrich_user_details_task
 import csv
 from io import TextIOWrapper
 import random
@@ -553,3 +553,42 @@ def recent_logs_api(request):
             'task_id': task_id
         })
     return JsonResponse({'logs': logs})
+
+
+class EnrichmentFormView(LoginRequiredMixin, View):
+    """View to handle starting enrichment task with account selection"""
+    def get(self, request):
+        accounts = Account.objects.filter(status='idle', health_score__gte=50, warmed_up=True)
+        return render(request, 'dmbot/enrichment_form.html', {'accounts': accounts})
+
+    def post(self, request):
+        try:
+            account_ids = request.POST.getlist('accounts')
+            if not account_ids:
+                messages.error(request, "At least one account must be selected for enrichment.")
+                return render(request, 'dmbot/enrichment_form.html', {
+                    'accounts': Account.objects.filter(status='idle', health_score__gte=50, warmed_up=True)
+                })
+
+            accounts = Account.objects.filter(id__in=account_ids, status='idle', health_score__gte=50, warmed_up=True)
+            if not accounts:
+                messages.error(request, "No valid accounts selected for enrichment.")
+                return render(request, 'dmbot/enrichment_form.html', {
+                    'accounts': Account.objects.filter(status='idle', health_score__gte=50, warmed_up=True)
+                })
+
+            # Update accounts to use selected ones and schedule task
+            selected_accounts_key = "enrichment_selected_accounts"
+            redis_client.delete(selected_accounts_key)
+            for account in accounts:
+                redis_client.rpush(selected_accounts_key, account.id)
+            redis_client.expire(selected_accounts_key, 3600)  # Expire in 1 hour
+
+            enrich_user_details_task.delay()
+            messages.success(request, "Enrichment task scheduled successfully with selected accounts.")
+            return redirect('status')
+        except Exception as e:
+            messages.error(request, f"Error scheduling enrichment: {str(e)}")
+            return render(request, 'dmbot/enrichment_form.html', {
+                'accounts': Account.objects.filter(status='idle', health_score__gte=50, warmed_up=True)
+            })

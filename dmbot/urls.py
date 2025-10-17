@@ -15,5 +15,5 @@ urlpatterns = [
     path('account-management/', views.AccountManagementView.as_view(), name='account_management'),
     path('api/latest-activities/', views.latest_activities_api, name='latest_activities_api'),
     path('api/recent-logs/', views.recent_logs_api, name='recent_logs_api'),
-
+    path('enrichment/', views.EnrichmentFormView.as_view(), name='enrichment_form'),
 ]
