@@ -259,3 +259,18 @@ class ProcessedMedia(models.Model):
 
     def __str__(self):
         return f"{self.media_id} for {self.hashtag} by {self.account.username}"
+
+
+class DMCsvUpload(models.Model):
+    name = models.CharField(max_length=255)
+    csv_file = models.FileField(upload_to='csv_uploads/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    processed = models.BooleanField(default=False)
+    total_processed = models.IntegerField(default=0)
+    total_successful = models.IntegerField(default=0)
+    total_failed = models.IntegerField(default=0)
+    total_skipped = models.IntegerField(default=0)
+    # user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"{self.name} ({self.uploaded_at})"

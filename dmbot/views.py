@@ -1,6 +1,8 @@
 import logging
+import os
 import re
 
+import pandas as pd
 import redis
 from celery import Celery, current_app
 from celery.app.control import Inspect
@@ -17,7 +19,8 @@ from django.views import View
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate, DMLog
+from .forms import DMCsvUploadForm
+from .models import Account, Alert, ScrapedUser, DMCampaign, DMTemplate, DMLog, DMCsvUpload
 from .tasks import scrape_users_task, send_dms_task, cancel_task, redis_client, enrich_user_details_task
 import csv
 from io import TextIOWrapper
@@ -28,7 +31,7 @@ from .utils import send_alert
 # Initialize Celery app (adjust this based on your Celery configuration)
 app = Celery('app', broker='redis://localhost:6379/0')  # Update with your broker URL
 
-class InputFormView(LoginRequiredMixin, View):
+class InputFormView(View):
     """View to handle input for scraping parameters"""
     def get(self, request):
         accounts = Account.objects.filter(status='idle', health_score__gte=50)
@@ -90,6 +93,7 @@ class InputFormView(LoginRequiredMixin, View):
             return render(request, 'dmbot/input_form.html', {
                 'accounts': Account.objects.filter(status='idle', health_score__gte=50)
             })
+
 
 class BotActivityView(View):
     def get(self, request):
@@ -192,6 +196,7 @@ class BotActivityView(View):
             send_alert(f"Error in BotActivityView.post: {e}", "error")
             return redirect('/')
 
+
 class StatusView(View):
     def get(self, request):
         # Fetch accounts and campaigns with ordering
@@ -204,6 +209,8 @@ class StatusView(View):
             alerts = Alert.objects.filter(severity__in=['error', 'warning', 'critical']).order_by('-timestamp')[:5]
             pending_enrichment = ScrapedUser.objects.filter(details_fetched=False).count()
             enriched_users = ScrapedUser.objects.filter(details_fetched=True).count()
+            total_dms_sent = DMLog.objects.count()
+            csv_campaigns = DMCsvUpload.objects.filter(processed=False)
 
             account_search = request.GET.get('account_search', '')
             campaign_search = request.GET.get('campaign_search', '')
@@ -242,10 +249,12 @@ class StatusView(View):
             'enriched_users': enriched_users,
             'account_search': account_search,
             'campaign_search': campaign_search,
+            'total_dms_sent': total_dms_sent,
+            'csv_campaigns': csv_campaigns
         })
 
 
-class AccountUploadView(LoginRequiredMixin, View):
+class AccountUploadView(View):
     """View to handle CSV upload for Instagram accounts"""
     def get(self, request):
         return render(request, 'dmbot/accounts.html')
@@ -291,7 +300,8 @@ class AccountUploadView(LoginRequiredMixin, View):
             messages.error(request, f"Error uploading accounts: {str(e)}")
             return render(request, 'dmbot/accounts.html')
 
-class AlertAcknowledgeView(LoginRequiredMixin, View):
+
+class AlertAcknowledgeView(View):
     """View to acknowledge alerts"""
     def post(self, request, alert_id):
         try:
@@ -303,46 +313,93 @@ class AlertAcknowledgeView(LoginRequiredMixin, View):
             messages.error(request, "Alert not found.")
         return redirect('status')
 
-class DMCampaignView(LoginRequiredMixin, View):
+
+class DMCsvUploadView(View):
+    def get(self, request):
+        form = DMCsvUploadForm()
+        return render(request, 'dmbot/csv_upload.html', {'form': form})
+
+    def post(self, request):
+        form = DMCsvUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            try:
+                csv_upload = DMCsvUpload.objects.create(
+                    name=form.cleaned_data['name'],
+                    csv_file=form.cleaned_data['csv_file'],
+                    user=request.user
+                )
+                csv_upload.accounts.set(form.cleaned_data['accounts'])
+                # Validate CSV
+                csv_path = os.path.join(settings.MEDIA_ROOT, csv_upload.csv_file.name)
+                df = pd.read_csv(csv_path)
+                required_columns = ['username', 'message']
+                if not all(col in df.columns for col in required_columns):
+                    messages.error(request, "CSV must contain 'username' and 'message' columns.")
+                    csv_upload.delete()
+                    return render(request, 'dmbot/csv_upload.html', {'form': form})
+                send_dms_task.delay(csv_upload_id=csv_upload.id, mode='csv')
+                messages.success(request, f"CSV campaign {csv_upload.name} started.")
+                return redirect('status')
+            except Exception as e:
+                messages.error(request, f"Error processing CSV: {str(e)}")
+                csv_upload.delete()
+                return render(request, 'dmbot/csv_upload.html', {'form': form})
+        messages.error(request, "Invalid form submission.")
+        return render(request, 'dmbot/csv_upload.html', {'form': form})
+
+
+class DMCampaignView(View):
     def get(self, request):
         templates = DMTemplate.objects.filter(active=True)
         if not templates:
             messages.error(request, "No active DM templates available. Please create a template first.")
             return redirect('template_form')
         accounts = Account.objects.filter(status='idle', warmed_up=True)
-        return render(request, 'dmbot/campaign_form.html', {'templates': templates, 'accounts': accounts})
+        return render(request, 'dmbot/campaign_form.html', {
+            'templates': templates,
+            'accounts': accounts,
+            'mode': 'campaign'  # Default mode
+        })
 
     def post(self, request):
-        try:
-            name = request.POST.get('name')
-            template_id = request.POST.get('template_id')
-            account_ids = request.POST.getlist('accounts')
-            filters = {
-                'professions': [p.strip() for p in request.POST.get('professions', '').split(',') if p.strip()],
-                'countries': [c.strip() for c in request.POST.get('countries', '').split(',') if c.strip()],
-                'keywords': [k.strip() for k in request.POST.get('keywords', '').split(',') if k.strip()]
-            }
-            if not DMTemplate.objects.filter(id=template_id, active=True).exists():
-                messages.error(request, "Selected template is invalid or inactive.")
+        mode = request.POST.get('mode', 'campaign')
+        if mode == 'campaign':
+            try:
+                name = request.POST.get('name')
+                template_id = request.POST.get('template_id')
+                account_ids = request.POST.getlist('accounts')
+                filters = {
+                    'professions': [p.strip() for p in request.POST.get('professions', '').split(',') if p.strip()],
+                    'countries': [c.strip() for c in request.POST.get('countries', '').split(',') if c.strip()],
+                    'keywords': [k.strip() for k in request.POST.get('keywords', '').split(',') if k.strip()]
+                }
+                if not DMTemplate.objects.filter(id=template_id, active=True).exists():
+                    messages.error(request, "Selected template is invalid or inactive.")
+                    return render(request, 'dmbot/campaign_form.html', {
+                        'templates': DMTemplate.objects.filter(active=True),
+                        'accounts': Account.objects.filter(status='idle', warmed_up=True),
+                        'mode': mode
+                    })
+                campaign = DMCampaign.objects.create(
+                    name=name, template_id=template_id, target_filters=filters
+                )
+                campaign.accounts.set(account_ids)
+                send_dms_task.delay(campaign_id=campaign.id, mode='campaign')
+                messages.success(request, f"Campaign {name} started.")
+                return redirect('status')
+            except Exception as e:
+                messages.error(request, f"Error starting campaign: {str(e)}")
                 return render(request, 'dmbot/campaign_form.html', {
                     'templates': DMTemplate.objects.filter(active=True),
-                    'accounts': Account.objects.filter(status='idle', warmed_up=True)
+                    'accounts': Account.objects.filter(status='idle', warmed_up=True),
+                    'mode': mode
                 })
-            campaign = DMCampaign.objects.create(
-                name=name, template_id=template_id, target_filters=filters
-            )
-            campaign.accounts.set(account_ids)
-            send_dms_task.delay(campaign.id)
-            messages.success(request, f"Campaign {name} started.")
-            return redirect('status')
-        except Exception as e:
-            messages.error(request, f"Error starting campaign: {str(e)}")
-            return render(request, 'dmbot/campaign_form.html', {
-                'templates': DMTemplate.objects.filter(active=True),
-                'accounts': Account.objects.filter(status='idle', warmed_up=True)
-            })
+        else:
+            # Redirect to CSV upload for CSV mode
+            return redirect('csv_upload')
 
-class DMTemplateView(LoginRequiredMixin, View):
+
+class DMTemplateView(View):
     """View to create and manage DM templates with pagination and search"""
 
     def get(self, request):
@@ -402,7 +459,7 @@ class DMTemplateView(LoginRequiredMixin, View):
             messages.error(request, f"Error creating template: {str(e)}")
             return redirect('template_form')
 
-class ScrapedUsersView(LoginRequiredMixin, View):
+class ScrapedUsersView(View):
     """View to display list of scraped users with pagination and search"""
 
     def get(self, request):
@@ -554,8 +611,7 @@ def recent_logs_api(request):
         })
     return JsonResponse({'logs': logs})
 
-
-class EnrichmentFormView(LoginRequiredMixin, View):
+class EnrichmentFormView(View):
     """View to handle starting enrichment task with account selection"""
     def get(self, request):
         accounts = Account.objects.filter(status='idle', health_score__gte=50, warmed_up=True)

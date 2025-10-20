@@ -1,0 +1,74 @@
+<!-- csv_upload.html -->
+{% extends 'dmbot/base.html' %}
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <!-- Header -->
+        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-primary to-secondary">
+            <h2 class="text-2xl font-bold text-white">Upload CSV for DM Campaign</h2>
+            <p class="mt-1 text-sm text-indigo-100">Upload a CSV file with usernames and messages</p>
+        </div>
+
+        <!-- Form -->
+        <form method="post" enctype="multipart/form-data" class="p-6 space-y-6">
+            {% csrf_token %}
+            <!-- Campaign Name -->
+            <div>
+                <label for="name" class="block text-sm font-medium text-gray-700 mb-2">
+                    Campaign Name <span class="text-red-500">*</span>
+                </label>
+                {{ form.name }}
+            </div>
+
+            <!-- CSV File -->
+            <div>
+                <label for="csv_file" class="block text-sm font-medium text-gray-700 mb-2">
+                    CSV File <span class="text-red-500">*</span>
+                </label>
+                {{ form.csv_file }}
+                <p class="mt-2 text-xs text-gray-500">CSV must contain 'username' and 'message' columns.</p>
+            </div>
+
+            <!-- Accounts -->
+            <div>
+                <label for="accounts" class="block text-sm font-medium text-gray-700 mb-2">
+                    Instagram Accounts <span class="text-red-500">*</span>
+                </label>
+                {{ form.accounts }}
+                <p class="mt-2 text-xs text-gray-500">Select one or more accounts (Ctrl+click or Cmd+click for multiple)</p>
+            </div>
+
+            <!-- Info Box -->
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div class="flex items-start">
+                    <svg class="w-5 h-5 text-blue-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                    <div>
+                        <h3 class="text-sm font-medium text-blue-900">CSV Format</h3>
+                        <p class="mt-1 text-sm text-blue-700">Ensure your CSV has 'username' and 'message' columns. Example: <br>
+                            <code>username,message<br>user1,Hello! Loved your recent post!<br>user2,Great content!</code>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                <a href="{% url 'status' %}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    Cancel
+                </a>
+                <button type="submit" class="inline-flex items-center px-6 py-2 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm font-medium">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Start CSV Campaign
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

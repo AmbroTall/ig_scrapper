@@ -38,10 +38,6 @@
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Dashboard
                     </a>
-                    <a href="{% url 'input_form' %}"
-                       class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
-                        Schedule Scraping
-                    </a>
                     <a href="{% url 'template_form' %}"
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Templates
@@ -50,10 +46,7 @@
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Campaigns
                     </a>
-                    <a href="{% url 'enrichment_form' %}"
-                       class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
-                        Schedule Enrichment
-                    </a>
+
                     <a href="{% url 'scraped_users' %}"
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Users
@@ -61,6 +54,14 @@
                     <a href="{% url 'account_upload' %}"
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Accounts
+                    </a>
+                    <a href="{% url 'enrichment_form' %}"
+                       class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
+                        Schedule Enrichment
+                    </a>
+                    <a href="{% url 'input_form' %}"
+                       class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
+                        Schedule Scraping
                     </a>
                     <a href="{% url 'sent_messages' %}"
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
