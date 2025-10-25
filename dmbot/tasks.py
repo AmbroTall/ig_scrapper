@@ -827,9 +827,13 @@ def clean_alerts_task(self):
 
         # Delete oldest alerts to bring count below 1000
         excess_count = alert_count - 900  # Keep 900 to leave buffer
-        alerts_to_delete = Alert.objects.order_by('timestamp')[:excess_count]
-        deleted_count = alerts_to_delete.count()
-        alerts_to_delete.delete()
+
+        oldest_ids = list(
+            Alert.objects.order_by('timestamp')
+            .values_list('id', flat=True)[:excess_count]
+        )
+
+        deleted_count, _ = Alert.objects.filter(id__in=oldest_ids).delete()
 
         logging.info(f"Deleted {deleted_count} old alerts")
         send_alert(f"Deleted {deleted_count} old alerts", "info")
