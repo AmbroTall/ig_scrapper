@@ -270,6 +270,7 @@ class DMCsvUpload(models.Model):
     total_successful = models.IntegerField(default=0)
     total_failed = models.IntegerField(default=0)
     total_skipped = models.IntegerField(default=0)
+    accounts = models.ManyToManyField(Account, related_name='campaigns_csv')
     # user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
     def __str__(self):

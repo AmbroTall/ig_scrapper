@@ -326,7 +326,7 @@ class DMCsvUploadView(View):
                 csv_upload = DMCsvUpload.objects.create(
                     name=form.cleaned_data['name'],
                     csv_file=form.cleaned_data['csv_file'],
-                    user=request.user
+                    # user=request.user
                 )
                 csv_upload.accounts.set(form.cleaned_data['accounts'])
                 # Validate CSV
@@ -341,6 +341,7 @@ class DMCsvUploadView(View):
                 messages.success(request, f"CSV campaign {csv_upload.name} started.")
                 return redirect('status')
             except Exception as e:
+                print(e)
                 messages.error(request, f"Error processing CSV: {str(e)}")
                 csv_upload.delete()
                 return render(request, 'dmbot/csv_upload.html', {'form': form})
