@@ -1,24 +1,26 @@
 import os
+import uuid
 from datetime import timedelta
 import logging
-
 import pandas as pd
 import redis
+import requests
 from celery import shared_task, current_app
 from celery.result import AsyncResult
+from celery.signals import task_success, task_failure, task_revoked  # Add signal imports
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-import logging
 import random
 import time
 
 from instagrapi.exceptions import RateLimitError, ClientError
 
 from .filter import UserFilter
-from .models import ScrapedUser, Account, DMCampaign, Alert, DMTemplate, DMCsvUpload, DMLog
+from .models import ScrapedUser, Account, DMCampaign, Alert, DMTemplate, DMCsvUpload, DMLog, ScheduledTask, \
+    DailyMetric  # Add ScheduledTask
 from .scraper import InstagramScraper
 from .dm_sender import DMSender
 from .utils import setup_client, send_alert
@@ -26,10 +28,65 @@ from .utils import setup_client, send_alert
 redis_client = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=0)
 
 
+def contains_error_patterns(message):
+    """Check if message contains error-related patterns (from secondary script)"""
+    if not message or not isinstance(message, str):
+        return True, "empty_or_invalid_message"
+
+    message_lower = message.lower()
+    error_patterns = [
+        'error', 'exception', 'failed', 'failure', 'fail',
+        'invalid', 'unable', 'could not', 'cannot', 'can\'t',
+        'unauthorized', 'forbidden', 'denied', 'rejected',
+        'rate limit', 'too many', 'try again later', 'please wait',
+        'temporarily blocked', 'spam', 'suspended', 'restricted',
+        'traceback', 'stack trace', 'debug', 'warning',
+        'critical', 'fatal', 'abort', 'crash', 'timeout',
+        '404', '403', '401', '500', '429', 'http error',
+        'connection error', 'network error', 'server error',
+        'api error', 'request failed', 'response error',
+        'database error', 'mysql', 'sql error', 'query failed',
+        'no data', 'not found', 'missing', 'null', 'undefined',
+        'instagram error', 'ig error', 'checkpoint', 'challenge required',
+        'verification required', 'account suspended', 'action blocked'
+    ]
+
+    for pattern in error_patterns:
+        if pattern in message_lower:
+            return True, f"contains_{pattern.replace(' ', '_')}"
+
+    if any(char in message for char in ['<', '>', '{', '}', 'SELECT', 'INSERT', 'UPDATE', 'DELETE']):
+        return True, "suspicious_technical_content"
+
+    if len(message.strip()) < 5:
+        return True, "message_too_short"
+
+    return False, None
+
 @shared_task(bind=True, ignore_result=False)
 def scrape_users_task(self, account_id, source_type, source_id, amount=None):
     lock_key = "scraping_lock"
     try:
+        # ✅ CHECK DAILY LIMIT FIRST
+        today_metric, _ = DailyMetric.objects.get_or_create(date=timezone.now().date())
+        if today_metric.scraped_count >= today_metric.scraping_threshold:
+            today_metric.scraping_limit_reached = True
+            today_metric.save()
+
+            logging.warning(
+                f"Daily scraping limit reached: {today_metric.scraped_count}/{today_metric.scraping_threshold}")
+            send_alert(
+                message=f"⛔ Daily scraping limit reached: {today_metric.scraped_count}/{today_metric.scraping_threshold}. Scraping stopped.",
+                severity="warning"
+            )
+
+            # Update ScheduledTask to cancelled
+            ScheduledTask.objects.filter(task_id=self.request.id).update(status='cancelled')
+            return {"status": "cancelled", "reason": "daily_limit_reached"}
+
+        # Update ScheduledTask status to 'running'
+        ScheduledTask.objects.filter(task_id=self.request.id).update(status='running')
+
         # Fetch account within transaction to ensure consistency
         with transaction.atomic():
             account = Account.objects.select_for_update().get(id=account_id)
@@ -105,6 +162,8 @@ def scrape_users_task(self, account_id, source_type, source_id, amount=None):
                     account=account
                 )
                 cache.set(cache_key, True, timeout=60)
+            # Update ScheduledTask status to 'failed'
+            ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
             raise
 
     except Exception as e:
@@ -117,601 +176,612 @@ def scrape_users_task(self, account_id, source_type, source_id, amount=None):
                 account=None
             )
             cache.set(cache_key, True, timeout=60)
+        # Update ScheduledTask status to 'failed'
+        ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+        raise
     finally:
         redis_client.delete(lock_key)
 
+# Signal handlers for scrape_users_task
+@task_success.connect(sender=scrape_users_task)
+def scrape_success_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='completed')
 
-def contains_error_patterns(message):
-    """Check if message contains error-related patterns (from secondary script)"""
-    if not message or not isinstance(message, str):
-        return True, "empty_or_invalid_message"
-
-    message_lower = message.lower()
-    error_patterns = [
-        'error', 'exception', 'failed', 'failure', 'fail',
-        'invalid', 'unable', 'could not', 'cannot', 'can\'t',
-        'unauthorized', 'forbidden', 'denied', 'rejected',
-        'rate limit', 'too many', 'try again later', 'please wait',
-        'temporarily blocked', 'spam', 'suspended', 'restricted',
-        'traceback', 'stack trace', 'debug', 'warning',
-        'critical', 'fatal', 'abort', 'crash', 'timeout',
-        '404', '403', '401', '500', '429', 'http error',
-        'connection error', 'network error', 'server error',
-        'api error', 'request failed', 'response error',
-        'database error', 'mysql', 'sql error', 'query failed',
-        'no data', 'not found', 'missing', 'null', 'undefined',
-        'instagram error', 'ig error', 'checkpoint', 'challenge required',
-        'verification required', 'account suspended', 'action blocked'
-    ]
-
-    for pattern in error_patterns:
-        if pattern in message_lower:
-            return True, f"contains_{pattern.replace(' ', '_')}"
-
-    if any(char in message for char in ['<', '>', '{', '}', 'SELECT', 'INSERT', 'UPDATE', 'DELETE']):
-        return True, "suspicious_technical_content"
-
-    if len(message.strip()) < 5:
-        return True, "message_too_short"
-
-    return False, None
+@task_failure.connect(sender=scrape_users_task)
+def scrape_failure_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='failed')
 
 
-@shared_task(bind=True, rate_limit="200/h")
-def send_dms_task(self, campaign_id=None, csv_upload_id=None, mode='campaign', max_dms_per_account=15):
+@shared_task(bind=True, rate_limit="500/h", ignore_result=False)
+def send_dms_task(
+        self,
+        campaign_id=None,
+        csv_upload_id=None,
+        account_id=None,
+        mode='campaign',
+        max_dms_per_account=15
+):
+    """
+    Send DMs for ONE account with strict limit enforcement.
+    """
     dm_sender = DMSender()
+    account = None
+    cl = None
+
     try:
-        if mode == 'campaign':
+        # === UPDATE TASK STATUS ===
+        ScheduledTask.objects.filter(task_id=self.request.id).update(status='running')
+
+        # === 1. FETCH AND LOCK ACCOUNT ===
+        try:
             with transaction.atomic():
-                campaign = DMCampaign.objects.select_for_update().get(id=campaign_id)
-                if not campaign.is_active:
-                    dm_sender.logger.info(f"Campaign {campaign.name} is inactive")
-                    send_alert(f"Campaign {campaign.name} is inactive", "info")
-                    return
-                if not DMTemplate.objects.filter(id=campaign.template_id, active=True).exists():
-                    dm_sender.logger.error(f"No active template for campaign {campaign.name}")
-                    send_alert(f"No active template for campaign {campaign.name}", "error")
-                    campaign.is_active = False
-                    campaign.save()
-                    return
-                template = campaign.template.template
-                accounts = campaign.accounts.filter(status="idle", warmed_up=True)
-                user_filter = UserFilter()
-                users = user_filter.filter_users(
-                    professions=campaign.target_filters.get('professions', []),
-                    countries=campaign.target_filters.get('countries', []),
-                    keywords=campaign.target_filters.get('keywords', []),
-                    activity_days=30
-                ).filter(
-                    dm_sent=False,
+                account = Account.objects.select_for_update().get(
+                    id=account_id,
+                    status='idle',
+                    warmed_up=True
+                )
+
+                # ============= EARLY LIMIT CHECK =============
+                account.reset_daily_counters()  # Ensure fresh counters
+
+                if not account.can_send_dm():
+                    logging.warning(
+                        f"Account {account.username} cannot send DMs. "
+                        f"DMs today: {account.dms_sent_today}/{account.daily_dm_limit}, "
+                        f"Health: {account.health_score}%, Warmed up: {account.warmed_up}"
+                    )
+                    send_alert(
+                        f"Account {account.username} cannot send DMs - limit reached or health too low",
+                        "warning",
+                        account
+                    )
+                    ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+                    return {"status": "failed", "reason": "account_cannot_send_dms"}
+
+                remaining_capacity = account.daily_dm_limit - account.dms_sent_today
+                if remaining_capacity <= 0:
+                    logging.info(f"Account {account.username} has reached DM limit")
+                    send_alert(
+                        f"Account {account.username} has reached daily DM limit ({account.daily_dm_limit})",
+                        "info",
+                        account
+                    )
+                    ScheduledTask.objects.filter(task_id=self.request.id).update(status='completed')
+                    return {"status": "completed", "reason": "dm_limit_reached"}
+
+                # Adjust max_dms_per_account to respect the limit
+                max_dms_per_account = min(max_dms_per_account, remaining_capacity)
+                # ============================================
+
+        except Account.DoesNotExist:
+            logging.warning(f"Account {account_id} is not idle or not warmed up. Skipping task.")
+            ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+            return {"status": "failed", "reason": "account_unavailable"}
+
+        # === 2. MARK ACCOUNT AS BUSY ===
+        with transaction.atomic():
+            account.status = "sending_dms"
+            account.task_id = self.request.id
+            account.save()
+
+        # === 3. SETUP INSTAGRAM CLIENT ===
+        cl = setup_client(account)
+        if not cl:
+            with transaction.atomic():
+                account.status = "idle"
+                account.task_id = None
+                account.update_health_score(action_success=False, action_type="dm")
+                account.save()
+            send_alert(f"Failed to setup client for {account.username}", "error", account)
+            ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+            return {"status": "failed", "reason": "client_setup_failed"}
+
+        # === 4. PREPARE USERS ===
+        user_batch = []
+
+        if mode == 'campaign':
+            # --- Campaign Mode ---
+            try:
+                campaign = DMCampaign.objects.get(id=campaign_id)
+            except DMCampaign.DoesNotExist:
+                logging.error(f"Campaign {campaign_id} not found")
+                send_alert(f"Campaign {campaign_id} not found", "error")
+                return _finalize_account_task(self, account, cl, dm_sender, mode)
+
+            if not campaign.is_active:
+                send_alert(f"Campaign {campaign.name} is inactive", "info")
+                return _finalize_account_task(self, account, cl, dm_sender, mode, campaign_id=campaign_id)
+
+            template = campaign.template.template
+            user_filter = UserFilter()
+            users = user_filter.filter_users(
+                professions=campaign.target_filters.get('professions', []),
+                countries=campaign.target_filters.get('countries', []),
+                keywords=campaign.target_filters.get('keywords', []),
+                activity_days=30
+            ).filter(dm_sent=False, is_active=True, is_private=False)
+
+            if not users.exists():
+                fallback_users = ScrapedUser.objects.filter(
+                    # dm_sent=False,
                     is_active=True,
+                    details_fetched=True,
                     is_private=False
                 )
-                if not users.exists():
-                    users = ScrapedUser.objects.filter(
-                        dm_sent=False,
-                        is_active=True,
-                        details_fetched=True,
-                        is_private=False
-                    )
-                    if not users.exists():
-                        dm_sender.logger.error(f"No eligible users available for campaign {campaign.name}")
-                        send_alert(f"No eligible users available for campaign {campaign.name}", "error")
+                if not fallback_users.exists():
+                    send_alert(f"No eligible users for campaign {campaign.name}", "info")
+                    with transaction.atomic():
                         campaign.is_active = False
                         campaign.save()
-                        return
-        else:  # CSV mode
-            with transaction.atomic():
-                csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                if csv_upload.processed:
-                    dm_sender.logger.info(f"CSV campaign {csv_upload.name} already processed")
-                    send_alert(f"CSV campaign {csv_upload.name} already processed", "info")
-                    return
-                accounts = csv_upload.accounts.filter(status="idle", warmed_up=True)
-                csv_path = os.path.join(settings.MEDIA_ROOT, csv_upload.csv_file.name)
+                    return _finalize_account_task(self, account, cl, dm_sender, mode, campaign_id=campaign_id)
+                user_batch = list(fallback_users[:max_dms_per_account])
+            else:
+                user_batch = list(users[:max_dms_per_account])
+
+        else:
+            # --- CSV Mode ---
+            try:
+                with transaction.atomic():
+                    csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
+            except DMCsvUpload.DoesNotExist:
+                logging.error(f"CSV upload {csv_upload_id} not found")
+                send_alert(f"CSV upload {csv_upload_id} not found", "error")
+                ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+                return {"status": "failed", "reason": "csv_upload_missing"}
+
+            if csv_upload.processed:
+                send_alert(f"CSV {csv_upload.name} already processed", "info")
+                return _finalize_account_task(self, account, cl, dm_sender, mode, csv_upload_id=csv_upload_id)
+
+            csv_path = os.path.join(settings.MEDIA_ROOT, csv_upload.csv_file.name)
+            try:
                 df = pd.read_csv(csv_path)
-                df = df[df['title'] != "Instagram User"]
-                df = df[df['title'] != "Instagram user"]
-                processed_usernames = set(
-                    DMLog.objects.filter(csv_upload=csv_upload).values_list('recipient_user__username', flat=True))
-                df = df[~df['username'].isin(processed_usernames)]
-                users = df[['username', 'message']].to_dict('records')
-                if not users:
-                    dm_sender.logger.info(f"No new users to process in CSV {csv_upload.name}")
-                    send_alert(f"No new users to process in CSV {csv_upload.name}", "info")
+            except Exception as e:
+                logging.error(f"Failed to read CSV {csv_path}: {e}")
+                send_alert(f"Failed to read CSV: {e}", "error")
+                return _finalize_account_task(self, account, cl, dm_sender, mode, csv_upload_id=csv_upload_id)
+
+            df = df[df['title'] != "Instagram User"]
+            df = df[df['title'] != "Instagram user"]
+
+            processed_usernames = set(
+                DMLog.objects.filter(csv_upload=csv_upload)
+                .values_list('recipient_user__username', flat=True)
+            )
+            df = df[~df['username'].isin(processed_usernames)]
+            user_batch = df[['username', 'message']].to_dict('records')[:max_dms_per_account]
+
+            if not user_batch:
+                with transaction.atomic():
                     csv_upload.processed = True
                     csv_upload.save()
-                    return
+                send_alert(f"No new users in CSV {csv_upload.name}", "info")
+                return _finalize_account_task(self, account, cl, dm_sender, mode, csv_upload_id=csv_upload_id)
 
-        for account in accounts:
-            if not account.can_send_dm():
-                dm_sender.logger.info(f"Account {account.username} cannot send DMs")
-                send_alert(f"Account {account.username} cannot send DMs", "info", account)
-                continue
+        # === 5. SEND DMS WITH LIMIT ENFORCEMENT ===
+        dm_count = 0
+        successful = 0
+        failed = 0
+        skipped = 0
+        consecutive_failures = 0
 
-            cl = setup_client(account)
-            if not cl:
-                with transaction.atomic():
-                    account = Account.objects.select_for_update().get(id=account.id)
-                    account.update_health_score(False, "dm")
-                    account.save()
-                send_alert(f"Failed to setup client for {account.username}", "error", account)
-                continue
-
+        for user in user_batch:
+            # ============= CHECK LIMIT BEFORE EACH DM =============
             with transaction.atomic():
-                account = Account.objects.select_for_update().get(id=account.id)
-                account.status = "sending_dms"
-                account.save()
+                account.refresh_from_db()
 
-            dm_count = 0
-            consecutive_failures = 0
-            successful = 0
-            failed = 0
-            skipped = 0
+                if account.dms_sent_today >= account.daily_dm_limit:
+                    logging.info(
+                        f"Account {account.username} reached DM limit during sending: "
+                        f"{account.dms_sent_today}/{account.daily_dm_limit}"
+                    )
+                    send_alert(
+                        f"Account {account.username} reached daily DM limit ({account.daily_dm_limit})",
+                        "warning",
+                        account
+                    )
+                    break  # Stop sending DMs
 
-            user_batch = users[:max_dms_per_account] if mode == 'campaign' else users
-            for user in user_batch:
-                try:
-                    username = user.username if mode == 'campaign' else user['username']
-                    custom_message = user['message'] if mode == 'csv' else None
-                    has_error, error_reason = contains_error_patterns(custom_message) if custom_message else (False,
-                                                                                                              None)
-                    if has_error:
-                        dm_sender.logger.info(f"Skipping {username} - Message contains error pattern: {error_reason}")
-                        send_alert(f"Skipping {username} - Message contains error pattern: {error_reason}", "info")
-                        skipped += 1
-                        if mode == 'csv':
-                            with transaction.atomic():
-                                csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                                csv_upload.total_skipped += 1
-                                csv_upload.save()
-                        continue
+                if not account.can_send_dm():
+                    logging.warning(
+                        f"Account {account.username} can no longer send DMs (health: {account.health_score}%)"
+                    )
+                    send_alert(
+                        f"Account {account.username} stopped sending - health too low ({account.health_score}%)",
+                        "warning",
+                        account
+                    )
+                    break
+            # =====================================================
 
+            username = user.username if mode == 'campaign' else user['username']
+            custom_message = user.get('message') if mode == 'csv' else None
+            alert = None
+
+            # Skip if message has error pattern
+            if custom_message and contains_error_patterns(custom_message)[0]:
+                reason = contains_error_patterns(custom_message)[1]
+                dm_sender.logger.info(f"Skipping {username} - Message error: {reason}")
+                send_alert(f"Skipping {username} - Message error: {reason}", "info", account)
+                skipped += 1
+                if mode == 'csv':
                     with transaction.atomic():
-                        alert = Alert.objects.create(
-                            account=account,
-                            severity="info",
-                            message=f"Sending DM to {username} for {'campaign' if mode == 'campaign' else 'CSV'}",
-                            timestamp=timezone.now()
-                        )
-                        user_obj, _ = ScrapedUser.objects.get_or_create(username=username)
-                        user_id = cl.user_id_from_username(username)
-                        dm_text = custom_message if custom_message else dm_sender.generate_dynamic_dm(
-                            user_obj.biography, template)
-                        cl.direct_send(dm_text, [user_id])
-                        user_obj.dm_sent = True
-                        user_obj.dm_sent_at = timezone.now()
-                        user_obj.dm_account = account
-                        user_obj.save()
-                        DMLog.objects.create(
-                            sender_account=account,
-                            recipient_user=user_obj,
-                            message=dm_text,
-                            sent_at=timezone.now(),
-                            csv_upload=csv_upload if mode == 'csv' else None,
-                            campaign=campaign if mode == 'campaign' else None
-                        )
-                        if mode == 'campaign':
-                            campaign = DMCampaign.objects.select_for_update().get(id=campaign_id)
-                            campaign.total_sent += 1
-                            campaign.save()
-                        else:
-                            csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                            csv_upload.total_successful += 1
-                            csv_upload.total_processed += 1
-                            csv_upload.save()
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.dms_sent_today += 1
-                        account.last_active = timezone.now()
-                        account.update_health_score(True, "dm")
-                        account.save()
-                        alert.message += "\nDM sent successfully"
-                        alert.save()
+                        csv_upload.total_skipped += 1
+                        csv_upload.save()
+                continue
 
-                    dm_sender.logger.info(f"Sent DM to {username} from {account.username}")
-                    send_alert(f"Sent DM to {username} from {account.username}", "info", account)
-                    dm_count += 1
-                    successful += 1
-                    consecutive_failures = 0
-                    if dm_count % 3 == 0:
-                        dm_sender.perform_activity(cl, account, campaign if mode == 'campaign' else None)
-                    time.sleep(random.uniform(40, 120))
+            try:
+                with transaction.atomic():
+                    alert = Alert.objects.create(
+                        account=account,
+                        severity="info",
+                        message=f"Sending DM to {username}",
+                        timestamp=timezone.now()
+                    )
 
-                except RateLimitError:
-                    with transaction.atomic():
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.status = "rate_limited"
-                        account.save()
-                        alert = Alert.objects.select_for_update().get(id=alert.id)
-                        alert.message += "\nFailed: Rate limit hit"
+                    user_obj, _ = ScrapedUser.objects.get_or_create(
+                        username=username,
+                        defaults={
+                            'account': account,
+                            'source_type': 'csv' if mode == 'csv' else 'campaign',
+                            'source_value': csv_upload.name if mode == 'csv' else campaign.name
+                        }
+                    )
+
+                    user_id = cl.user_id_from_username(username)
+                    dm_text = custom_message or dm_sender.generate_dynamic_dm(user_obj.biography, template)
+                    cl.direct_send(dm_text, [user_id])
+
+                    # Success updates
+                    user_obj.dm_sent = True
+                    user_obj.dm_sent_at = timezone.now()
+                    user_obj.dm_account = account
+                    user_obj.save()
+
+                    DMLog.objects.create(
+                        sender_account=account,
+                        recipient_user=user_obj,
+                        message=dm_text,
+                        sent_at=timezone.now(),
+                        csv_upload=csv_upload if mode == 'csv' else None,
+                        campaign=campaign if mode == 'campaign' else None
+                    )
+
+                    if mode == 'campaign':
+                        campaign.total_sent += 1
+                        campaign.save()
+                    else:
+                        csv_upload.total_successful += 1
+                        csv_upload.total_processed += 1
+                        csv_upload.save()
+
+                    account.dms_sent_today += 1
+                    account.last_active = timezone.now()
+                    account.update_health_score(action_success=True, action_type="dm")
+                    account.save()
+
+                    alert.message += " - Success"
+                    alert.save()
+
+                dm_sender.logger.info(
+                    f"Sent DM to {username} from {account.username} "
+                    f"({account.dms_sent_today}/{account.daily_dm_limit})"
+                )
+                send_alert(f"Sent DM to {username}", "info", account)
+                successful += 1
+                dm_count += 1
+                consecutive_failures = 0
+
+                if dm_count % 3 == 0:
+                    dm_sender.perform_activity(cl, account, campaign if mode == 'campaign' else None)
+
+                time.sleep(random.uniform(40, 120))
+
+            except RateLimitError:
+                with transaction.atomic():
+                    account.status = "rate_limited"
+                    account.task_id = None
+                    account.save()
+                    if alert:
+                        alert.message += " - Rate limit"
                         alert.severity = "warning"
                         alert.save()
-                    send_alert(f"Rate limit hit for DMs on {account.username}", "warning", account)
-                    failed += 1
-                    consecutive_failures += 1
-                    break
-                except ClientError as e:
-                    error_str = str(e).lower()
-                    with transaction.atomic():
-                        user_obj, _ = ScrapedUser.objects.get_or_create(username=username)
-                        alert = Alert.objects.select_for_update().get(id=alert.id)
-                        if "403" in error_str:
-                            dm_sender.logger.info(f"Cannot send DM to {username} due to 403 error, skipping")
-                            send_alert(f"Cannot send DM to {username} due to 403 error, skipping", "info", account)
-                            user_obj.is_active = False
-                            user_obj.failure_reason = "403 Forbidden: DM restricted"
-                            user_obj.save()
-                            alert.message += "\nFailed: 403 Forbidden, user skipped"
-                            alert.severity = "info"
-                            alert.save()
-                            skipped += 1
-                        else:
-                            dm_sender.logger.error(f"Failed to send DM to {username}: {e}")
-                            send_alert(f"Failed to send DM to {username}: {e}", "error", account)
-                            account.update_health_score(False, "dm")
-                            account.save()
-                            alert.message += f"\nFailed: {str(e)}"
-                            alert.severity = "error"
-                            alert.save()
-                            failed += 1
-                            consecutive_failures += 1
+                send_alert(f"Rate limit hit on {account.username}", "warning", account)
+                failed += 1
+                break
+
+            except ClientError as e:
+                error_str = str(e).lower()
+                with transaction.atomic():
+                    if "403" in error_str:
+                        user_obj.is_active = False
+                        user_obj.failure_reason = "403: DM restricted"
+                        user_obj.save()
+                        skipped += 1
+                        alert.message += " - 403, skipped"
+                        alert.severity = "info"
+                        alert.save()
+                        send_alert(f"403: Cannot DM {username}", "info", account)
                         if mode == 'csv':
-                            csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                            csv_upload.total_failed += 1 if "403" not in error_str else 0
-                            csv_upload.total_skipped += 1 if "403" in error_str else 0
+                            csv_upload.total_skipped += 1
                             csv_upload.total_processed += 1
                             csv_upload.save()
-                except Exception as e:
-                    dm_sender.logger.error(f"Unexpected DM error for {username}: {e}")
-                    send_alert(f"Unexpected DM error for {username}: {e}", "error", account)
-                    with transaction.atomic():
-                        user_obj, _ = ScrapedUser.objects.get_or_create(username=username)
-                        user_obj.failure_reason = str(e)
-                        user_obj.save()
-                        alert = Alert.objects.select_for_update().get(id=alert.id)
-                        alert.message += f"\nFailed: {str(e)}"
+                    else:
+                        account.update_health_score(action_success=False, action_type="dm")
+                        account.save()
+                        failed += 1
+                        alert.message += f" - Error: {e}"
                         alert.severity = "error"
                         alert.save()
+                        send_alert(f"Failed DM to {username}: {e}", "error", account)
                         if mode == 'csv':
-                            csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
                             csv_upload.total_failed += 1
                             csv_upload.total_processed += 1
                             csv_upload.save()
-                    failed += 1
                     consecutive_failures += 1
 
-                if consecutive_failures >= 5:
-                    dm_sender.logger.error(f"Reached 5 consecutive failures for account {account.username}")
-                    send_alert(f"Reached 5 consecutive failures for account {account.username}, stopping", "error",
-                               account)
-                    break
+            except Exception as e:
+                dm_sender.logger.error(f"Unexpected error sending DM to {username}: {e}")
+                send_alert(f"DM error: {e}", "error", account)
+                failed += 1
+                consecutive_failures += 1
+                if alert:
+                    alert.message += f" - {e}"
+                    alert.severity = "error"
+                    alert.save()
 
-            with transaction.atomic():
-                account = Account.objects.select_for_update().get(id=account.id)
-                account.status = "idle"
-                account.save()
+            if consecutive_failures >= 5:
+                send_alert(f"5 consecutive failures on {account.username}, stopping", "error", account)
+                break
 
-        if mode == 'campaign':
-            with transaction.atomic():
-                campaign = DMCampaign.objects.select_for_update().get(id=campaign_id)
-                remaining_users = user_filter.filter_users(
-                    professions=campaign.target_filters.get('professions', []),
-                    countries=campaign.target_filters.get('countries', []),
-                    keywords=campaign.target_filters.get('keywords', []),
-                    activity_days=30
-                ).filter(
-                    dm_sent=False,
-                    is_active=True,
-                    is_private=False
-                )
-                if not remaining_users.exists():
-                    dm_sender.logger.info(f"Campaign {campaign.name} completed: no eligible users remaining")
-                    send_alert(f"Campaign {campaign.name} completed: no eligible users remaining", "info")
-                    campaign.is_active = False
-                campaign.save()
-        else:
-            with transaction.atomic():
-                csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                remaining_users = pd.read_csv(os.path.join(settings.MEDIA_ROOT, csv_upload.csv_file.name))
-                remaining_users = remaining_users[~remaining_users['username'].isin(
-                    set(DMLog.objects.filter(csv_upload=csv_upload).values_list('recipient_user__username', flat=True))
-                )]
-                if not len(remaining_users):
-                    csv_upload.processed = True
-                    dm_sender.logger.info(f"CSV campaign {csv_upload.name} completed: no users remaining")
-                    send_alert(f"CSV campaign {csv_upload.name} completed: no users remaining", "info")
-                csv_upload.save()
+        # === 6. FINALIZE ===
+        return _finalize_account_task(
+            self, account, cl, dm_sender,
+            mode, campaign_id, csv_upload_id,
+            successful, failed, skipped
+        )
 
     except Exception as e:
-        dm_sender.logger.error(f"{'Campaign' if mode == 'campaign' else 'CSV campaign'} failed: {e}")
-        send_alert(f"{'Campaign' if mode == 'campaign' else 'CSV campaign'} failed: {str(e)}", "error")
-        with transaction.atomic():
-            if mode == 'campaign':
-                try:
-                    campaign = DMCampaign.objects.select_for_update().get(id=campaign_id)
-                    campaign.is_active = False
-                    campaign.save()
-                except DMCampaign.DoesNotExist:
-                    dm_sender.logger.error(f"Campaign {campaign_id} does not exist")
-                    send_alert(f"Campaign {campaign_id} does not exist", "error")
-            else:
-                try:
-                    csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
-                    csv_upload.processed = True
-                    csv_upload.save()
-                except DMCsvUpload.DoesNotExist:
-                    dm_sender.logger.error(f"CSV upload {csv_upload_id} does not exist")
-                    send_alert(f"CSV upload {csv_upload_id} does not exist", "error")
+        logging.error(f"DM task failed: {e}", exc_info=True)
+        send_alert(f"DM task failed: {str(e)}", "error")
 
-@shared_task(bind=True, rate_limit="200/h")
-def enrich_user_details_task(self):
-    """Fetch detailed metadata for users in batches using selected or any idle account"""
-    lock_key = "enrichment_lock"
-    selected_accounts_key = "enrichment_selected_accounts"
+        if account:
+            try:
+                with transaction.atomic():
+                    acct = Account.objects.select_for_update().get(id=account.id)
+                    acct.status = "idle"
+                    acct.task_id = None
+                    acct.save()
+            except Exception as reset_err:
+                logging.error(f"Failed to reset account {account.id}: {reset_err}")
+
+        ScheduledTask.objects.filter(task_id=self.request.id).update(status='failed')
+        raise
+
+
+def _finalize_account_task(
+    task, account, cl, dm_sender,
+    mode, campaign_id=None, csv_upload_id=None,
+    successful=0, failed=0, skipped=0
+):
+    """Safely reset account and update campaign/CSV status"""
     try:
-        if redis_client.get(lock_key):
-            logging.warning("Enrichment task already running, skipping new task")
-            cache_key = f"alert_enrich_conflict_{self.request.id}"
-            if not cache.get(cache_key):
-                send_alert("Enrichment task skipped: another enrichment task is active", "warning")
-                cache.set(cache_key, True, timeout=60)
-            return 0
+        with transaction.atomic():
+            acct = Account.objects.select_for_update().get(id=account.id)
+            acct.status = "idle"
+            acct.task_id = None
+            acct.save()
+    except Exception as e:
+        logging.error(f"Failed to finalize account {account.id}: {e}")
 
+    total = successful + failed + skipped
+    msg = f"DM task complete: {account.username} → {successful}s, {failed}f, {skipped}sk"
+    dm_sender.logger.info(msg)
+    send_alert(msg, "info", account)
+
+    # === Campaign Completion ===
+    if mode == 'campaign' and campaign_id:
+        try:
+            campaign = DMCampaign.objects.get(id=campaign_id)
+            user_filter = UserFilter()
+            remaining = user_filter.filter_users(
+                professions=campaign.target_filters.get('professions', []),
+                countries=campaign.target_filters.get('countries', []),
+                keywords=campaign.target_filters.get('keywords', []),
+                activity_days=30
+            ).filter(dm_sent=False, is_active=True, is_private=False).exists()
+
+            if not remaining:
+                fallback = ScrapedUser.objects.filter(dm_sent=False, is_active=True).exists()
+                if not fallback:
+                    with transaction.atomic():
+                        campaign.is_active = False
+                        campaign.save()
+                    send_alert(f"Campaign {campaign.name} completed", "info")
+        except DMCampaign.DoesNotExist:
+            pass
+
+    # === CSV Completion ===
+    elif mode == 'csv' and csv_upload_id:
         try:
             with transaction.atomic():
-                redis_client.set(lock_key, self.request.id, ex=3600)  # Lock for 1 hour
-            logging.info("Starting enrich_user_details_task")
-            cache_key = f"alert_enrich_start_{self.request.id}"
-            if not cache.get(cache_key):
-                send_alert("Starting enrich_user_details_task", "info")
-                cache.set(cache_key, True, timeout=60)
-
-            # Use selected accounts if available
-            selected_ids = redis_client.lrange(selected_accounts_key, 0, -1)
-            if selected_ids:
-                accounts = Account.objects.filter(
-                    id__in=[int(aid) for aid in selected_ids],
-                    status="idle",
-                    warmed_up=True,
-                    health_score__gte=50
-                )
-                redis_client.delete(selected_accounts_key)  # Clear after use
-            else:
-                accounts_qs = Account.objects.filter(
-                    status="idle",
-                    warmed_up=True,
-                    health_score__gte=50
-                )
-
-                count = accounts_qs.count()
-                if count <= 1:
-                    accounts = accounts_qs
-                elif count == 2:
-                    accounts = accounts_qs[:1]
-                elif count == 3:
-                    accounts = accounts_qs[:2]
-                else:
-                    accounts = accounts_qs[:count // 2]
-
-            logging.info(f"Found {accounts.count()} idle accounts for enrichment")
-            cache_key = f"alert_enrich_accounts_{self.request.id}"
-            if not cache.get(cache_key):
-                send_alert(f"Found {accounts.count()} idle accounts for enrichment", "info")
-                cache.set(cache_key, True, timeout=60)
-
-            if not accounts:
-                logging.warning("No idle, warmed-up accounts available for enrichment")
-                cache_key = f"alert_no_accounts_{self.request.id}"
-                if not cache.get(cache_key):
-                    send_alert("No idle, warmed-up accounts available for enrichment", "warning")
-                    cache.set(cache_key, True, timeout=60)
-                return 0
-
-            updated_count = 0
-            skipped_count = 0
-            batch_size = 50
-
-            for account in accounts:
-                if not account.can_scrape():
-                    logging.info(f"Account {account.username} cannot enrich users (health: {account.health_score}%)")
-                    cache_key = f"alert_account_cannot_enrich_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Account {account.username} cannot enrich users (health: {account.health_score}%)",
-                                   "info", account)
-                        cache.set(cache_key, True, timeout=60)
-                    continue
-
-                cl = setup_client(account)
-                if not cl:
-                    logging.error(f"Failed to setup client for {account.username}")
-                    with transaction.atomic():
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.update_health_score(False, "scrape")
-                        account.save()
-                    cache_key = f"alert_client_setup_fail_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Failed to setup client for {account.username}", "error", account)
-                        cache.set(cache_key, True, timeout=60)
-                    continue
-
-                user_batch = ScrapedUser.objects.filter(
-                    # account=account,
-                    details_fetched=False,
-                    failure_reason__isnull=True
-                )[:batch_size]
-                logging.info(f"Processing {user_batch.count()} users for account {account.username}")
-                cache_key = f"alert_processing_users_{account.id}"
-                if not cache.get(cache_key):
-                    send_alert(f"Processing {user_batch.count()} users for account {account.username}", "info", account)
-                    cache.set(cache_key, True, timeout=60)
-
-                if not user_batch:
-                    logging.info(f"No users to enrich for account {account.username}")
-                    cache_key = f"alert_no_users_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"No users to enrich for account {account.username}", "info", account)
-                        cache.set(cache_key, True, timeout=60)
-                    continue
-
-                try:
-                    with transaction.atomic():
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.status = "enriching_users"
-                        account.task_id = self.request.id  # Store task_id
-                        account.save()
-
-                    scraper = InstagramScraper()
-                    for user in user_batch:
-                        try:
-                            user_data = scraper._get_user_detailed_info(cl, user.username)
-                            with transaction.atomic():
-                                user = ScrapedUser.objects.select_for_update().get(id=user.id)
-                                if not user_data:
-                                    user.failure_reason = "Failed to fetch detailed info"
-                                    user.is_active = False
-                                    user.details_fetched = True
-                                    user.save()
-                                    skipped_count += 1
-                                    logging.warning(f"No data for user {user.username}")
-                                    cache_key = f"alert_no_data_{user.username}_{account.id}"
-                                    if not cache.get(cache_key):
-                                        send_alert(f"No data for user {user.username}", "warning", account)
-                                        cache.set(cache_key, True, timeout=60)
-                                    continue
-
-                                user.user_id = user_data.get("user_id")
-                                user.biography = user_data.get("biography", "")
-                                user.follower_count = user_data.get("follower_count", 0)
-                                user.following_count = user_data.get("following_count", 0)
-                                user.post_count = user_data.get("post_count", 0)
-                                user.last_post_date = user_data.get("last_post_date")
-                                user.is_active = user_data.get("is_active", True)
-                                user.details_fetched = True
-                                user.save()
-                                updated_count += 1
-                                logging.info(f"Enriched user {user.username} with account {account.username}")
-                                cache_key = f"alert_enriched_user_{user.username}_{account.id}"
-                                if not cache.get(cache_key):
-                                    send_alert(f"Enriched user {user.username} with account {account.username}", "info",
-                                               account)
-                                    cache.set(cache_key, True, timeout=60)
-
-                            time.sleep(random.uniform(25, 30))
-                            if updated_count % 10 == 0:
-                                time.sleep(random.uniform(120, 300))
-
-                        except RateLimitError:
-                            logging.warning(f"Rate limit hit for {account.username} during enrichment")
-                            with transaction.atomic():
-                                account = Account.objects.select_for_update().get(id=account.id)
-                                account.status = "rate_limited"
-                                account.task_id = None  # Clear task_id
-                                account.save()
-                            cache_key = f"alert_rate_limit_enrich_{account.id}"
-                            if not cache.get(cache_key):
-                                send_alert(f"Rate limit hit for {account.username} during enrichment", "warning",
-                                           account)
-                                cache.set(cache_key, True, timeout=60)
-                            break
-                        except ClientError as e:
-                            logging.error(f"Failed to enrich user {user.username}: {e}")
-                            with transaction.atomic():
-                                user = ScrapedUser.objects.select_for_update().get(id=user.id)
-                                user.failure_reason = str(e)
-                                user.details_fetched = True
-                                user.save()
-                            skipped_count += 1
-                            cache_key = f"alert_enrich_error_{user.username}_{account.id}"
-                            if not cache.get(cache_key):
-                                send_alert(f"Failed to enrich user {user.username}: {e}", "error", account)
-                                cache.set(cache_key, True, timeout=60)
-                            if "challenge_required" in str(e).lower():
-                                with transaction.atomic():
-                                    account = Account.objects.select_for_update().get(id=account.id)
-                                    account.status = "error"
-                                    account.login_failures += 1
-                                    account.last_login_failure = timezone.now()
-                                    account.task_id = None  # Clear task_id
-                                    account.save()
-                                cache_key = f"alert_challenge_required_{account.id}"
-                                if not cache.get(cache_key):
-                                    send_alert(f"Challenge required for {account.username}", "error", account)
-                                    cache.set(cache_key, True, timeout=60)
-                                break
-                        except Exception as e:
-                            logging.error(f"Unexpected error enriching user {user.username}: {e}", exc_info=True)
-                            with transaction.atomic():
-                                user = ScrapedUser.objects.select_for_update().get(id=user.id)
-                                user.failure_reason = str(e)
-                                user.details_fetched = True
-                                user.save()
-                            skipped_count += 1
-                            cache_key = f"alert_unexpected_error_{user.username}_{account.id}"
-                            if not cache.get(cache_key):
-                                send_alert(f"Unexpected error enriching user {user.username}: {e}", "error", account)
-                                cache.set(cache_key, True, timeout=60)
-                            continue
-
-                    with transaction.atomic():
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.last_active = timezone.now()
-                        account.status = "idle"
-                        account.update_health_score(True, "scrape")
-                        account.task_id = None  # Clear task_id
-                        account.save()
-                    time.sleep(random.uniform(60, 120))
-
-                except Exception as e:
-                    logging.error(f"Enrichment failed for account {account.username}: {e}", exc_info=True)
-                    with transaction.atomic():
-                        account = Account.objects.select_for_update().get(id=account.id)
-                        account.status = "idle"
-                        account.task_id = None  # Clear task_id
-                        account.update_health_score(False, "scrape")
-                        account.save()
-                    cache_key = f"alert_enrich_account_fail_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Enrichment failed for account {account.username}: {e}", "error", account)
-                        cache.set(cache_key, True, timeout=60)
-                    continue
-
-            logging.info(f"Enriched {updated_count} users, skipped {skipped_count}")
-            cache_key = f"alert_enrich_summary_{self.request.id}"
-            if not cache.get(cache_key):
-                send_alert(f"Enriched {updated_count} users, skipped {skipped_count}", "info")
-                cache.set(cache_key, True, timeout=60)
-
-            if updated_count > 0:
-                logging.info("Queuing classify_users_task")
-                cache_key = f"alert_queue_classify_{self.request.id}"
-                if not cache.get(cache_key):
-                    send_alert("Queuing classify_users_task", "info")
-                    cache.set(cache_key, True, timeout=60)
-                classify_users_task.delay()
-
-            if ScrapedUser.objects.filter(details_fetched=False, failure_reason__isnull=True).exists():
-                logging.info("Queuing another enrich_user_details_task")
-                cache_key = f"alert_queue_enrich_{self.request.id}"
-                if not cache.get(cache_key):
-                    send_alert("Queuing another enrich_user_details_task", "info")
-                    cache.set(cache_key, True, timeout=60)
-                enrich_user_details_task.delay()
-
-            return updated_count
-
+                csv_upload = DMCsvUpload.objects.select_for_update().get(id=csv_upload_id)
+                total_logs = DMLog.objects.filter(csv_upload=csv_upload).count()
+                df = pd.read_csv(os.path.join(settings.MEDIA_ROOT, csv_upload.csv_file.name))
+                if total_logs >= len(df):
+                    csv_upload.processed = True
+                    csv_upload.save()
+                    send_alert(f"CSV {csv_upload.name} fully processed", "info")
         except Exception as e:
-            logging.error(f"enrich_user_details_task failed: {e}", exc_info=True)
-            cache_key = f"alert_enrich_task_fail_{self.request.id}"
-            if not cache.get(cache_key):
-                send_alert(f"enrich_user_details_task failed: {e}", "error")
-                cache.set(cache_key, True, timeout=60)
-            raise
+            send_alert(f"CSV completion check failed: {e}", "error")
+
+    ScheduledTask.objects.filter(task_id=task.request.id).update(status='success')
+    return {
+        "status": "success",
+        "account": account.username,
+        "sent": successful,
+        "failed": failed,
+        "skipped": skipped
+    }
+
+# Signal handlers for send_dms_task
+@task_success.connect(sender=send_dms_task)
+def dm_success_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='completed')
+
+@task_failure.connect(sender=send_dms_task)
+def dm_failure_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='failed')
+
+
+# ──────────────────────────────────────────────────────────────
+# Instagram Web API Headers + Proxy Config
+# ──────────────────────────────────────────────────────────────
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'X-IG-App-ID': '936619743392459',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': '*/*',
+    'Referer': 'https://www.instagram.com/',
+    'Origin': 'https://www.instagram.com',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+PROXY_HOST = "core-residential.evomi.com"
+PROXY_PORT = "1000"
+PROXY_USER_BASE = "robertthom3"
+PROXY_PASSWORD = "3DDQ6eQd4OK8Xx2EZQYW"
+
+
+def get_fresh_proxy_session():
+    session_id = str(uuid.uuid4())[:8]
+    proxy_user = f"{PROXY_USER_BASE}_session_{session_id}"
+    proxy_url = f"http://{proxy_user}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
+    proxy_url = f"http://core-residential.evomi.com:1000:robertthom3:3DDQ6eQd4OK8Xx2EZQYW"
+    return {"http": proxy_url, "https": proxy_url}
+
+
+@shared_task(bind=True, max_retries=10, default_retry_delay=60, rate_limit="2000/h")
+def enrich_user_details_task(self):
+    lock_key = "enrichment_proxy_lock_v3"
+
+    # Allow max 10 parallel enrichment tasks
+    current = redis_client.get(lock_key)
+    if current and int(current) >= 10:
+        send_alert("Max parallel enrichment tasks reached (10) – task requeued", "warning")
+        raise self.retry(countdown=120)
+
+    try:
+        redis_client.incr(lock_key)
+        redis_client.expire(lock_key, 3600)
+
+        send_alert("Proxy-based enrichment task started (no account login)", "info")
+
+        batch_size = 70
+        users = ScrapedUser.objects.filter(
+            details_fetched=False,
+            failure_reason__isnull=True
+        )[:batch_size]
+
+        if not users:
+            send_alert("No more users to enrich – enrichment job completed", "success")
+            return 0
+
+        proxies = get_fresh_proxy_session()
+        updated = 0
+        failed = 0
+
+        for user in users:
+            try:
+                url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={user.username}"
+
+                resp = requests.get(
+                    url,
+                    headers=HEADERS,
+                    proxies=proxies,
+                    timeout=20,
+                    verify=False
+                )
+
+                if resp.status_code == 404:
+                    user.failure_reason = "Account not found / deleted"
+                    user.details_fetched = True
+                    user.save(update_fields=['failure_reason', 'details_fetched'])
+                    send_alert(f"@{user.username} → not found (404)", "warning")
+                    failed += 1
+                    continue
+
+                if resp.status_code != 200:
+                    send_alert(f"HTTP {resp.status_code} for @{user.username} – retrying later", "warning")
+                    raise Exception("Bad response")
+
+                data = resp.json()
+                ig_user = data.get("data", {}).get("user")
+                if not ig_user:
+                    user.failure_reason = "Empty response"
+                    user.details_fetched = True
+                    user.save(update_fields=['failure_reason', 'details_fetched'])
+                    failed += 1
+                    continue
+
+                # Extract data safely
+                bio = (ig_user.get("biography") or "").encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+
+                user.user_id = ig_user.get("id")
+                user.full_name = ig_user.get("full_name", "")[:150]
+                user.biography = bio
+                user.follower_count = ig_user.get("edge_followed_by", {}).get("count")
+                user.following_count = ig_user.get("edge_follow", {}).get("count")
+                user.post_count = ig_user.get("edge_owner_to_timeline_media", {}).get("count")
+                user.is_private = ig_user.get("is_private", False)
+                user.is_business_account = ig_user.get("is_business_account", False)
+                user.is_verified = ig_user.get("is_verified", False)
+                user.profile_pic_url = ig_user.get("profile_pic_url_hd") or ig_user.get("profile_pic_url")
+                user.external_url = ig_user.get("external_url", "")
+                user.details_fetched = True
+                user.enriched_at = timezone.now()
+                user.save()
+
+                updated += 1
+                send_alert(f"ENRICHED @{user.username} → {user.follower_count} followers", "success")
+
+                time.sleep(random.uniform(0.9, 2.3))
+
+            except Exception as e:
+                # Don't mark failed — next task will retry with fresh IP
+                send_alert(f"Failed @{user.username}: {str(e)} – will retry later", "warning")
+                failed += 1
+                continue
+
+        # Summary alert
+        send_alert(f"Enrichment batch completed → {updated} enriched, {failed} skipped/failed", "info")
+
+        # Requeue if more work
+        if ScrapedUser.objects.filter(details_fetched=False, failure_reason__isnull=True).exists():
+            send_alert("More users pending → requeuing enrichment task", "info")
+            enrich_user_details_task.delay()
+
+        return updated
+
+    except Exception as e:
+        send_alert(f"Enrichment task crashed: {str(e)}", "error")
+        raise self.retry(countdown=60 * (2 ** self.request.retries))
 
     finally:
-        redis_client.delete(lock_key)
+        redis_client.decr(lock_key)
+        send_alert("Enrichment task finished & lock released", "info")
 
+# Signal handlers for enrich_user_details_task
+@task_success.connect(sender=enrich_user_details_task)
+def enrich_success_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='completed')
 
-@shared_task(rate_limit='50/h')  # Limit to 50 calls per hour to avoid API overuse
+@task_failure.connect(sender=enrich_user_details_task)
+def enrich_failure_handler(sender, **kwargs):
+    ScheduledTask.objects.filter(task_id=sender.request.id).update(status='failed')
+
+# The following tasks remain unchanged as they are not mentioned in the scheduling requirements
+@shared_task(rate_limit='10/h')
 def classify_users_task(batch_size=50):
     """Classify users for profession and country in batches"""
     try:
@@ -727,7 +797,6 @@ def classify_users_task(batch_size=50):
             classify_users_task.delay(batch_size=batch_size)
     except Exception as e:
         logging.error(f"Classification task failed: {e}")
-
 
 @shared_task
 def warmup_accounts_task():
@@ -780,7 +849,6 @@ def health_check_task():
     except Exception as e:
         logging.error(f"Health check failed: {e}")
 
-
 @shared_task
 def cancel_task(task_id):
     try:
@@ -793,6 +861,8 @@ def cancel_task(task_id):
             alert.save()
         redis_client.delete("scraping_lock")  # Release lock if scraping task
         logging.info(f"Task {task_id} cancelled")
+        # Update ScheduledTask status to 'cancelled'
+        ScheduledTask.objects.filter(task_id=task_id).update(status='cancelled')
         return {"status": "cancelled", "task_id": task_id}
     except Exception as e:
         logging.error(f"Failed to cancel task {task_id}: {str(e)}")
@@ -802,7 +872,6 @@ def cancel_task(task_id):
             timestamp=timezone.now()
         )
         return {"status": "failed", "error": str(e)}
-
 
 @shared_task(bind=True)
 def clean_alerts_task(self):
@@ -850,7 +919,7 @@ def clean_alerts_task(self):
 
 @shared_task(bind=True)
 def reset_stale_accounts_task(self):
-    """Check accounts with non-idle status and reset to idle if task_id is not in Celery queue."""
+    """Check accounts with scraping/sending_dms status and reset to idle if task_id is not in Celery queue."""
     lock_key = "reset_stale_accounts_lock"
     if redis_client.get(lock_key):
         logging.warning("Reset stale accounts task already running, skipping")
@@ -862,11 +931,14 @@ def reset_stale_accounts_task(self):
         logging.info("Starting reset_stale_accounts_task")
         send_alert("Starting reset_stale_accounts_task", "info")
 
-        # Get non-idle accounts
-        non_idle_accounts = Account.objects.exclude(status="idle")
+        # Define statuses that should be reset
+        resettable_statuses = ["scraping", "sending_dms"]
+
+        # Get accounts with resettable statuses only
+        non_idle_accounts = Account.objects.filter(status__in=resettable_statuses)
         if not non_idle_accounts:
-            logging.info("No non-idle accounts found")
-            send_alert("No non-idle accounts found", "info")
+            logging.info("No accounts with resettable statuses found")
+            send_alert("No accounts with resettable statuses found", "info")
             return 0
 
         # Inspect Celery queue
@@ -912,3 +984,102 @@ def reset_stale_accounts_task(self):
 
     finally:
         redis_client.delete(lock_key)
+
+@task_revoked.connect
+def on_task_revoked(sender=None, request=None, terminated=None, signum=None, expired=None, **kwargs):
+    """
+    This runs **every time any Celery task is revoked** (revoke(), kill, terminate, etc.).
+    """
+    task_id = request.id if request else kwargs.get('task_id')
+    if not task_id:
+        return
+
+    try:
+        task = ScheduledTask.objects.get(task_id=task_id)
+        if task.status in ('scheduled', 'running'):
+            task.status = 'cancelled'
+            task.save(update_fields=['status'])
+
+            message = (
+                f"ScheduledTask {task.id} (task_id={task_id}) marked as cancelled "
+                f"by Celery revoke signal."
+            )
+            logging.info(message)
+            send_alert(message, "info")
+    except ScheduledTask.DoesNotExist:
+        # The task was never stored in ScheduledTask (e.g. ad-hoc tasks) – ignore.
+        pass
+    except Exception as e:
+        x = f"Failed to update ScheduledTask on revoke {task_id}: {e}"
+        send_alert(x, "error")
+
+# Define your scraping task names (MUST match exactly!)
+SCRAPING_TASK_NAMES = [
+    'dmbot.tasks.scrape_users_task',
+]
+
+@shared_task(bind=True)
+def enforce_daily_scraping_limit(self):
+    today = timezone.now().date()
+    metric, _ = DailyMetric.objects.get_or_create(date=today)
+
+    # Update scraped count
+    actual_scraped_count = ScrapedUser.objects.filter(scraped_at__date=today).count()
+    metric.scraped_count = actual_scraped_count
+
+    # Update enriched count (users whose details were fetched today)
+    actual_enriched_count = ScrapedUser.objects.filter(
+        scraped_at__date=today,
+        details_fetched=True
+    ).count()
+    metric.enriched_count = actual_enriched_count
+
+    # Update DM sent count
+    actual_dm_count = DMLog.objects.filter(sent_at__date=today).count()
+    metric.dm_sent_count = actual_dm_count
+
+    # If limit reached and not already handled today
+    if actual_scraped_count >= metric.scraping_threshold and not metric.scraping_limit_reached:
+        metric.scraping_limit_reached = True
+        metric.save()
+
+        # Prevent spam: only send alert once per day
+        cache_key = f"scraping_limit_alert_sent_{today}"
+        if not cache.get(cache_key):
+            send_alert(
+                message=
+                    f"Daily scraping threshold hit: {actual_scraped_count:,} / {metric.scraping_threshold:,} users.\n\n"
+                    "All active scraping tasks have been terminated.\n"
+                    "Scraping will resume automatically tomorrow."
+                ,
+                severity="critical",
+            )
+            cache.set(cache_key, True, timeout=86400)  # 24 hours
+
+        # REVOKE ONLY SCRAPING TASKS
+        inspector = current_app.control.inspect()
+        active_tasks = inspector.active() or {}
+        revoked_count = 0
+
+        for worker, tasks in active_tasks.items():
+            for task in tasks:
+                task_name = task.get('name') or task.get('task')
+                task_id = task['id']
+
+                if task_name in SCRAPING_TASK_NAMES:
+                    current_app.control.revoke(task_id, terminate=True, signal='SIGTERM')
+                    revoked_count += 1
+
+        # Log result
+        if revoked_count > 0:
+            print(f"[SCRAPING LIMIT] Revoked {revoked_count} active scraping task(s).")
+        else:
+            print("[SCRAPING LIMIT] Limit reached, but no active scraping tasks to revoke.")
+    else:
+        # Reset flag if count dropped below threshold (e.g. manual cleanup)
+        if metric.scraping_limit_reached and actual_scraped_count < metric.scraping_threshold:
+            metric.scraping_limit_reached = False
+            metric.save()
+
+    metric.save()
+

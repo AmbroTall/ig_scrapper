@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Account, ScrapedUser, DMTemplate, DMCampaign,
-    Alert, DMLog, ProcessedMedia
+    Alert, DMLog, ProcessedMedia, ScheduledTask, DailyMetric
 )
 
 
@@ -95,3 +95,46 @@ class ProcessedMediaAdmin(admin.ModelAdmin):
     search_fields = ("media_id", "hashtag", "account__username")
     ordering = ("-processed_at",)
     readonly_fields = ("processed_at",)
+
+
+@admin.register(ScheduledTask)
+class ScheduledTaskAdmin(admin.ModelAdmin):
+    list_display = ('task_type', 'scheduled_time', 'status', 'created_at', 'parameters_summary')
+    list_filter = ('task_type', 'status', 'scheduled_time')
+    search_fields = ('task_id', 'parameters__source_value', 'parameters__name')
+    date_hierarchy = 'scheduled_time'
+    readonly_fields = ('created_at', 'updated_at', 'task_id', 'parameters')
+    ordering = ('-scheduled_time',)
+
+    def parameters_summary(self, obj):
+        """Display a summary of the task parameters."""
+        if obj.task_type == 'scrape':
+            return f"{obj.parameters.get('source_type', '').capitalize()}: {obj.parameters.get('source_value', '')}"
+        elif obj.task_type == 'enrich':
+            return f"Accounts: {', '.join(map(str, obj.parameters.get('account_ids', [])))}"
+        elif obj.task_type == 'dm_campaign':
+            return f"Campaign: {obj.parameters.get('name', '')}"
+        elif obj.task_type == 'dm_csv':
+            return f"CSV: {obj.parameters.get('name', '')}"
+        return str(obj.parameters)
+    parameters_summary.short_description = 'Parameters'
+
+    def get_queryset(self, request):
+        """Optimize queryset to reduce database hits."""
+        return super().get_queryset(request).select_related()
+
+
+@admin.register(DailyMetric)
+class DailyMetricAdmin(admin.ModelAdmin):
+    list_display = (
+        'date',
+        'scraped_count',
+        'enriched_count',
+        'dm_sent_count',
+        'scraping_threshold',
+        'scraping_limit_reached',
+    )
+
+    list_filter = ('scraping_limit_reached', 'date',)
+    search_fields = ('date',)
+    ordering = ('-date',)

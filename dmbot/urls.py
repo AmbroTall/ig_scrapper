@@ -1,7 +1,6 @@
 from django.urls import path
 from . import views
 
-
 urlpatterns = [
     path('input/', views.InputFormView.as_view(), name='input_form'),
     path('', views.StatusView.as_view(), name='status'),
@@ -15,6 +14,11 @@ urlpatterns = [
     path('account-management/', views.AccountManagementView.as_view(), name='account_management'),
     path('api/latest-activities/', views.latest_activities_api, name='latest_activities_api'),
     path('api/recent-logs/', views.recent_logs_api, name='recent_logs_api'),
-    path('enrichment/', views.EnrichmentFormView.as_view(), name='enrichment_form'),
+    # path('enrichment/', views.EnrichmentFormView.as_view(), name='enrichment_form'),
     path('csv-upload/', views.DMCsvUploadView.as_view(), name='csv_upload'),
+    path('fallbacks/', views.manage_fallbacks, name='manage_fallbacks'),
+    path('cancel_scheduled_task/<str:task_id>/', views.CancelScheduledTaskView.as_view(), name='cancel_scheduled_task'),
+    path('export/<str:model_type>/', views.DynamicExportView.as_view(), name='dynamic_export'),
+    path('metrics/history/', views.DailyMetricsHistoryView.as_view(), name='daily_metrics_history'),
+
 ]

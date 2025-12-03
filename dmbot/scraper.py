@@ -10,7 +10,7 @@ from instagrapi.exceptions import ClientError, UserNotFound, PrivateError, RateL
 from instagrapi.mixins.challenge import ChallengeChoice
 from pydantic import ValidationError
 
-from .models import ScrapedUser, ProcessedMedia
+from .models import ScrapedUser, ProcessedMedia, DailyMetric
 from .utils import setup_client, send_alert, challenge_code_handler
 
 
@@ -113,7 +113,34 @@ class InstagramScraper:
 
     def _browse_hashtags(self, cl, count=3):
         try:
-            hashtags = ["art", "design", "photography"]
+            hashtags = [
+                "art", "design", "photography", "artist", "artwork", "creative", "illustration",
+                "drawing", "painting", "digitalart", "graphicdesign", "artoftheday", "photooftheday",
+                "fineart", "modernart", "contemporaryart", "artgallery", "artcollectors",
+                "artlovers", "instaart", "instadesign", "instaphotography", "visualart",
+                "aesthetic", "creativity", "inspiration", "sketch", "sketchbook", "portrait",
+                "landscape", "abstract", "minimalism", "designinspiration", "interiordesign",
+                "architecture", "branding", "logo", "typography", "motiondesign", "animation",
+                "3dart", "3dmodeling", "digitalpainting", "conceptart", "characterdesign",
+                "photographer", "photoart", "streetphotography", "travelphotography",
+                "naturephotography", "blackandwhite", "bnw", "portraitphotography",
+                "fashionphotography", "filmphotography", "macro", "nightphotography",
+                "artcommunity", "artlife", "creativeprocess", "artistic", "mixedmedia",
+                "surrealism", "expressionism", "popart", "realism", "gallery", "museum",
+                "artshow", "artstudio", "artoftheworld", "designlife", "uxdesign", "uidesign",
+                "productdesign", "industrialdesign", "graphicdesigner", "photoshoot", "lens",
+                "dslr", "mirrorless", "lightroom", "photoshop", "capture", "composition",
+                "color", "visualdesign", "artdirection", "creativedirection", "illustrator",
+                "artistsoninstagram", "designers", "creatives", "handmade", "craft", "collage",
+                "digitalillustration", "drawingoftheday", "artdaily", "photodaily",
+                "fineartphotography", "artgram", "creativeart", "instaartist", "artoftheweek",
+                "designcommunity", "colorgrading", "photoediting", "creativephotography",
+                "editorialdesign", "fashiondesign", "artjournal", "paintingart", "artcollection",
+                "inspired", "designstudio", "creativeindustry", "illustrationart", "designthinking",
+                "artworld", "photojournalism", "visualstorytelling", "photoediting", "canon",
+                "nikon", "sonyalpha", "fujifilm", "leica", "cinematography", "streetart",
+                "graffiti", "urbanart", "digitalcreator", "contentcreator", "visuals", "aestheticart"
+            ]
             for hashtag in random.sample(hashtags, min(count, len(hashtags))):
                 cl.hashtag_info(hashtag)
                 time.sleep(random.uniform(30, 70))
@@ -139,7 +166,9 @@ class InstagramScraper:
                     send_alert(f"Warm-up failed for {account.username}", "warning", account)
                     return usernames
 
-            amount = self._calculate_scrape_amount(account, amount)
+            # amount = self._calculate_scrape_amount(account, amount)
+            amount = account.daily_scrape_limit - account.users_scraped_today
+
             if amount <= 0:
                 return usernames
 
@@ -158,7 +187,7 @@ class InstagramScraper:
 
                 if source_type == "hashtag":
                     # Saving is handled within _scrape_hashtag_likers
-                    self._scrape_hashtag_likers(cl, source_id, account, source_type)
+                    self._scrape_hashtag_likers(cl, source_id, account, source_type, amount)
                 else:
                     usernames = self._scrape_search(cl, source_id, amount, account)
                     if usernames:
@@ -206,20 +235,44 @@ class InstagramScraper:
 
         return usernames
 
-    def _scrape_hashtag_likers(self, cl, hashtag, account, source_type="hashtag"):
-        """Scrape likers, commenters, and post owners of top posts for a hashtag, tracking processed media in database."""
-        usernames = set()  # Stores tuples of (username, user_id)
+
+    def _scrape_hashtag_likers(self, cl, hashtag, account, source_type="hashtag", amount=None):
+        """Scrape likers, commenters, and post owners with strict limit enforcement."""
+        usernames = set()
         batch_size = getattr(settings, 'SCRAPING_BATCH_SIZE', 1000)
         total_likers_processed = 0
         total_commenters_processed = 0
         total_posts_processed = 0
         max_posts = 100
         num_posts = random.randint(20, 50)
-        max_likers_per_media = 50  # Fixed number of likers to fetch per media
-        max_comments_per_media = 50  # Fixed number of comments to fetch per media
+        max_likers_per_media = 50
+        max_comments_per_media = 50
+
+        # ============= EARLY LIMIT CHECK =============
+        if not amount:
+            amount = account.daily_scrape_limit - account.users_scraped_today
+
+        if amount <= 0:
+            self.logger.info(f"Account {account.username} has reached daily scrape limit")
+            send_alert(f"Account {account.username} has reached daily scrape limit", "info", account)
+            return []
+
+        # Check global daily metric threshold
+        today = timezone.now().date()
+        daily_metric, _ = DailyMetric.objects.get_or_create(date=today)
+
+        if daily_metric.scraping_limit_reached or daily_metric.scraped_count >= daily_metric.scraping_threshold:
+            self.logger.warning(
+                f"Global scraping threshold reached ({daily_metric.scraped_count}/{daily_metric.scraping_threshold})")
+            send_alert(f"Global scraping threshold reached for {today}", "warning", account)
+            with transaction.atomic():
+                daily_metric.scraping_limit_reached = True
+                daily_metric.save()
+            return []
+        # ============================================
 
         try:
-            # Validate hashtag
+            # Validate hashtag (keeping existing code)
             try:
                 hashtag_info = cl.hashtag_info(hashtag)
                 self.logger.info(f"Hashtag {hashtag} has {hashtag_info.media_count} posts")
@@ -230,19 +283,17 @@ class InstagramScraper:
                 if hashtag_info.media_count == 0:
                     self.logger.warning(f"Hashtag {hashtag} has no posts, falling back to search")
                     send_alert(f"Hashtag {hashtag} has no posts, falling back to search", "warning", account)
-                    return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                    return self._scrape_search(cl, hashtag, amount=amount, account=account)
             except ClientError as e:
                 self.logger.error(f"Failed to fetch hashtag info for {hashtag}: {e}")
                 send_alert(f"Failed to fetch hashtag info for {hashtag}: {e}", "error", account)
-                self.logger.warning(f"Invalid hashtag {hashtag}, falling back to search")
-                send_alert(f"Invalid hashtag {hashtag}, falling back to search", "warning", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                return self._scrape_search(cl, hashtag, amount=amount, account=account)
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching hashtag info for {hashtag}: {e}")
                 send_alert(f"Unexpected error fetching hashtag info for {hashtag}: {e}", "error", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                return self._scrape_search(cl, hashtag, amount=amount, account=account)
 
-            # Fetch top posts
+            # Fetch top posts (keeping existing code)
             try:
                 top_medias = cl.hashtag_medias_top(hashtag, amount=num_posts)
                 random.shuffle(top_medias)
@@ -250,39 +301,43 @@ class InstagramScraper:
                 if not top_medias:
                     self.logger.warning(f"No media found for hashtag {hashtag}, falling back to search")
                     send_alert(f"No media found for hashtag {hashtag}, falling back to search", "warning", account)
-                    return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                    return self._scrape_search(cl, hashtag, amount=amount, account=account)
                 self.logger.info(f"Scraping users for hashtag {hashtag}, {len(top_medias)} posts (top)")
                 cache_key = f"alert_scraping_users_{hashtag}_{account.id}"
                 if not cache.get(cache_key):
                     send_alert(f"Scraping users for hashtag {hashtag}, {len(top_medias)} posts (top)", "info", account)
                     cache.set(cache_key, True, timeout=60)
-            except ValidationError as e:
-                self.logger.error(f"Pydantic validation error fetching media for {hashtag}: {e}")
-                send_alert(f"Pydantic validation error fetching media for {hashtag}: {e}", "error", account)
-                self.logger.warning(f"Unable to fetch media for {hashtag}, falling back to search")
-                send_alert(f"Unable to fetch media for {hashtag}, falling back to search", "warning", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
-            except ClientError as e:
+            except (ValidationError, ClientError) as e:
                 self.logger.error(f"Failed to fetch media for {hashtag}: {e}")
-                send_alert(f"Failed to fetch media for {hashtag}: {e}", "error", account)
-                self.logger.warning(f"No media for {hashtag}, falling back to search")
-                send_alert(f"No media for {hashtag}, falling back to search", "warning", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                return self._scrape_search(cl, hashtag, amount=amount, account=account)
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching media for {hashtag}: {e}")
-                send_alert(f"Unexpected error fetching media for {hashtag}: {e}", "error", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                return self._scrape_search(cl, hashtag, amount=amount, account=account)
 
             posts_processed = 0
+
             for media in top_medias:
+                # ============= CHECK LIMITS BEFORE EACH POST =============
+                account.refresh_from_db()  # Get latest values
+
+                remaining_capacity = account.daily_scrape_limit - account.users_scraped_today
+                if remaining_capacity <= 0:
+                    self.logger.info(f"Account {account.username} reached daily limit during scraping")
+                    send_alert(f"Account {account.username} reached daily scrape limit ({account.daily_scrape_limit})",
+                               "warning", account)
+                    break
+
+                # Check global threshold again
+                daily_metric.refresh_from_db()
+                if daily_metric.scraping_limit_reached or daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                    self.logger.warning(f"Global threshold reached during scraping")
+                    send_alert(f"Global scraping threshold reached, stopping", "warning", account)
+                    break
+                # =========================================================
+
                 # Check if media is already processed
                 if ProcessedMedia.objects.filter(media_id=media.pk, hashtag=hashtag, account=account).exists():
                     self.logger.info(f"Skipping already processed media {media.pk} for hashtag {hashtag}")
-                    cache_key = f"alert_skip_media_{media.pk}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Skipping already processed media {media.pk} for hashtag {hashtag}", "info",
-                                   account)
-                        cache.set(cache_key, True, timeout=60)
                     continue
 
                 try:
@@ -290,85 +345,41 @@ class InstagramScraper:
                     try:
                         if media.user and media.user.username:
                             usernames.add((media.user.username, media.user.pk))
-                            self.logger.info(
-                                f"Added post owner {media.user.username} (ID: {media.user.pk}) for media {media.pk}")
-                            cache_key = f"alert_post_owner_{media.pk}_{account.id}"
-                            if not cache.get(cache_key):
-                                send_alert(
-                                    f"Added post owner {media.user.username} (ID: {media.user.pk}) for media {media.pk}",
-                                    "info", account)
-                                cache.set(cache_key, True, timeout=60)
+                            self.logger.info(f"Added post owner {media.user.username} (ID: {media.user.pk})")
                     except Exception as e:
                         self.logger.warning(f"Failed to get post owner for media {media.pk}: {e}")
-                        send_alert(f"Failed to get post owner for media {media.pk}: {e}", "warning", account)
 
-                    # Save batch if needed (after post owner)
+                    # Save batch if needed (with limit check)
                     if len(usernames) >= batch_size:
-                        try:
-                            with transaction.atomic():
-                                saved_count = self.store_users_enhanced(list(usernames), account, source_type, hashtag)
-                                account.users_scraped_today += saved_count
-                                account.save()
-                                self.logger.info(
-                                    f"Saved batch of {saved_count} users for hashtag {hashtag} (post owner)")
-                                cache_key = f"alert_save_batch_post_owner_{hashtag}_{account.id}"
-                                if not cache.get(cache_key):
-                                    send_alert(f"Saved batch of {saved_count} users for hashtag {hashtag} (post owner)",
-                                               "info", account)
-                                    cache.set(cache_key, True, timeout=60)
-                            usernames.clear()  # Clear only after successful save
-                            time.sleep(random.uniform(5, 15))  # Delay after batch save
-                        except Exception as e:
-                            self.logger.error(f"Failed to save batch for hashtag {hashtag} (post owner): {e}")
-                            send_alert(f"Failed to save batch for hashtag {hashtag} (post owner): {e}", "error",
-                                       account)
-                            continue  # Don't clear usernames, try next batch
+                        saved_count = self._save_batch_with_limit_check(
+                            usernames, account, source_type, hashtag, amount, daily_metric
+                        )
+                        if saved_count == -1:  # Limit reached signal
+                            return []
+                        usernames.clear()
+                        time.sleep(random.uniform(5, 15))
 
                     # Collect likers
                     try:
                         likers = cl.media_likers(media.pk)
                         media_likers_count = len(likers)
                         total_likers_processed += media_likers_count
-                        self.logger.info(
-                            f"Fetched {media_likers_count} likers for media {media.pk}, "
-                            f"total for this media {media_likers_count}"
-                        )
-                        cache_key = f"alert_likers_fetched_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(
-                                f"Fetched {media_likers_count} likers for media {media.pk}, "
-                                f"total for this media {media_likers_count}", "info", account
-                            )
-                            cache.set(cache_key, True, timeout=60)
+                        self.logger.info(f"Fetched {media_likers_count} likers for media {media.pk}")
 
-                        # Add likers to usernames
                         for liker in likers:
                             if liker.username and liker.pk:
                                 usernames.add((liker.username, liker.pk))
 
-                        # Save batch if needed (after likers)
+                        # Save batch if needed (with limit check)
                         if len(usernames) >= batch_size:
-                            try:
-                                with transaction.atomic():
-                                    saved_count = self.store_users_enhanced(list(usernames), account, source_type,
-                                                                            hashtag)
-                                    account.users_scraped_today += saved_count
-                                    account.save()
-                                    self.logger.info(
-                                        f"Saved batch of {saved_count} users for hashtag {hashtag} (likers)")
-                                    cache_key = f"alert_save_batch_likers_{hashtag}_{account.id}"
-                                    if not cache.get(cache_key):
-                                        send_alert(
-                                            f"Saved batch of {saved_count} users for hashtag {hashtag} (likers)",
-                                            "info", account)
-                                        cache.set(cache_key, True, timeout=60)
-                                usernames.clear()  # Clear only after successful save
-                                time.sleep(random.uniform(5, 15))  # Delay after batch save
-                            except Exception as e:
-                                self.logger.error(f"Failed to save batch for hashtag {hashtag} (likers): {e}")
-                                send_alert(f"Failed to save batch for hashtag {hashtag} (likers): {e}", "error",
-                                           account)
-                                continue  # Don't clear usernames, try next batch
+                            saved_count = self._save_batch_with_limit_check(
+                                usernames, account, source_type, hashtag, amount, daily_metric
+                            )
+                            if saved_count == -1:  # Limit reached signal
+                                return []
+                            usernames.clear()
+                            time.sleep(random.uniform(5, 15))
+
                     except RateLimitError:
                         self.logger.warning(f"Rate limit hit for media {media.pk} (likers)")
                         send_alert(f"Rate limit hit for media {media.pk} on {hashtag} (likers)", "warning", account)
@@ -377,38 +388,8 @@ class InstagramScraper:
                         account.save()
                         time.sleep(random.uniform(60, 120))
                         continue
-                    except ClientError as e:
+                    except (ClientError, ValidationError) as e:
                         self.logger.warning(f"Failed to fetch likers for media {media.pk}: {e}")
-                        send_alert(f"Failed to fetch likers for media {media.pk}: {e}", "warning", account)
-                        if "challenge_required" in str(e).lower():
-                            code = challenge_code_handler(account.username, ChallengeChoice.SMS)
-                            if code:
-                                try:
-                                    cl.challenge_resolve(code)
-                                    self.logger.info(f"Challenge resolved for {account.username}, retrying likers")
-                                    send_alert(f"Challenge resolved for {account.username}, retrying likers", "info",
-                                               account)
-                                    continue
-                                except Exception as ce:
-                                    self.logger.warning(f"Challenge resolution failed for {account.username}: {ce}")
-                                    send_alert(f"Challenge resolution failed for {account.username}: {ce}", "warning",
-                                               account)
-                            account.status = "error"
-                            account.login_failures += 1
-                            account.last_login_failure = timezone.now()
-                            account.task_id = None
-                            account.save()
-                            self.logger.warning(f"Challenge required for {account.username}, skipping media")
-                            send_alert(f"Challenge required for {account.username}, skipping media", "warning", account)
-                        continue
-                    except ValidationError as e:
-                        self.logger.warning(f"Pydantic validation error fetching likers for media {media.pk}: {e}")
-                        send_alert(f"Pydantic validation error fetching likers for media {media.pk}: {e}", "warning",
-                                   account)
-                        continue
-                    except Exception as e:
-                        self.logger.warning(f"Unexpected error fetching likers for media {media.pk}: {e}")
-                        send_alert(f"Unexpected error fetching likers for media {media.pk}: {e}", "warning", account)
                         continue
 
                     # Collect commenters
@@ -416,46 +397,22 @@ class InstagramScraper:
                         comments = cl.media_comments(media.pk, amount=max_comments_per_media)
                         media_commenters_count = len(comments)
                         total_commenters_processed += media_commenters_count
-                        self.logger.info(
-                            f"Fetched {media_commenters_count} comments for media {media.pk}, "
-                            f"total for this media {media_commenters_count}"
-                        )
-                        cache_key = f"alert_comments_fetched_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(
-                                f"Fetched {media_commenters_count} comments for media {media.pk}, "
-                                f"total for this media {media_commenters_count}", "info", account
-                            )
-                            cache.set(cache_key, True, timeout=60)
+                        self.logger.info(f"Fetched {media_commenters_count} comments for media {media.pk}")
 
-                        # Add commenters to usernames
                         for comment in comments:
                             if comment.user.username and comment.user.pk:
                                 usernames.add((comment.user.username, comment.user.pk))
 
-                        # Save batch if needed (after commenters)
+                        # Save batch if needed (with limit check)
                         if len(usernames) >= batch_size:
-                            try:
-                                with transaction.atomic():
-                                    saved_count = self.store_users_enhanced(list(usernames), account, source_type,
-                                                                            hashtag)
-                                    account.users_scraped_today += saved_count
-                                    account.save()
-                                    self.logger.info(
-                                        f"Saved batch of {saved_count} users for hashtag {hashtag} (commenters)")
-                                    cache_key = f"alert_save_batch_commenters_{hashtag}_{account.id}"
-                                    if not cache.get(cache_key):
-                                        send_alert(
-                                            f"Saved batch of {saved_count} users for hashtag {hashtag} (commenters)",
-                                            "info", account)
-                                        cache.set(cache_key, True, timeout=60)
-                                usernames.clear()  # Clear only after successful save
-                                time.sleep(random.uniform(5, 15))  # Delay after batch save
-                            except Exception as e:
-                                self.logger.error(f"Failed to save batch for hashtag {hashtag} (commenters): {e}")
-                                send_alert(f"Failed to save batch for hashtag {hashtag} (commenters): {e}", "error",
-                                           account)
-                                continue  # Don't clear usernames, try next batch
+                            saved_count = self._save_batch_with_limit_check(
+                                usernames, account, source_type, hashtag, amount, daily_metric
+                            )
+                            if saved_count == -1:  # Limit reached signal
+                                return []
+                            usernames.clear()
+                            time.sleep(random.uniform(5, 15))
+
                     except RateLimitError:
                         self.logger.warning(f"Rate limit hit for media {media.pk} (comments)")
                         send_alert(f"Rate limit hit for media {media.pk} on {hashtag} (comments)", "warning", account)
@@ -464,76 +421,22 @@ class InstagramScraper:
                         account.save()
                         time.sleep(random.uniform(60, 120))
                         continue
-                    except ClientError as e:
+                    except (ClientError, ValidationError) as e:
                         self.logger.warning(f"Failed to fetch comments for media {media.pk}: {e}")
-                        send_alert(f"Failed to fetch comments for media {media.pk}: {e}", "warning", account)
-                        if "challenge_required" in str(e).lower():
-                            code = challenge_code_handler(account.username, ChallengeChoice.SMS)
-                            if code:
-                                try:
-                                    cl.challenge_resolve(code)
-                                    self.logger.info(f"Challenge resolved for {account.username}, retrying comments")
-                                    send_alert(f"Challenge resolved for {account.username}, retrying comments", "info",
-                                               account)
-                                    continue
-                                except Exception as ce:
-                                    self.logger.warning(f"Challenge resolution failed for {account.username}: {ce}")
-                                    send_alert(f"Challenge resolution failed for {account.username}: {ce}", "warning",
-                                               account)
-                            account.status = "error"
-                            account.login_failures += 1
-                            account.last_login_failure = timezone.now()
-                            account.task_id = None
-                            account.save()
-                            self.logger.warning(f"Challenge required for {account.username}, skipping media")
-                            send_alert(f"Challenge required for {account.username}, skipping media", "warning", account)
-                        continue
-                    except ValidationError as e:
-                        self.logger.warning(f"Pydantic validation error fetching comments for media {media.pk}: {e}")
-                        send_alert(f"Pydantic validation error fetching comments for media {media.pk}: {e}", "warning",
-                                   account)
-                        continue
-                    except Exception as e:
-                        self.logger.warning(f"Unexpected error fetching comments for media {media.pk}: {e}")
-                        send_alert(f"Unexpected error fetching comments for media {media.pk}: {e}", "warning", account)
                         continue
 
-                    # Add likers and commenters to usernames (already done above, no need to repeat)
                     total_likers_processed += media_likers_count
                     total_commenters_processed += media_commenters_count
-                    self.logger.info(
-                        f"Processed media {media.pk} for hashtag {hashtag}: "
-                        f"likers: {media_likers_count}, commenters: {media_commenters_count}, "
-                        f"total unique users {len(usernames)}"
-                    )
-                    cache_key = f"alert_processed_media_{media.pk}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(
-                            f"Processed media {media.pk} for hashtag {hashtag}: "
-                            f"likers: {media_likers_count}, commenters: {media_commenters_count}, "
-                            f"total unique users {len(usernames)}", "info", account
-                        )
-                        cache.set(cache_key, True, timeout=60)
 
                     # Save batch if needed (after all users for this post)
                     if len(usernames) >= batch_size:
-                        try:
-                            with transaction.atomic():
-                                saved_count = self.store_users_enhanced(list(usernames), account, source_type, hashtag)
-                                account.users_scraped_today += saved_count
-                                account.save()
-                                self.logger.info(f"Saved batch of {saved_count} users for hashtag {hashtag} (post)")
-                                cache_key = f"alert_save_batch_post_{hashtag}_{account.id}"
-                                if not cache.get(cache_key):
-                                    send_alert(f"Saved batch of {saved_count} users for hashtag {hashtag} (post)",
-                                               "info", account)
-                                    cache.set(cache_key, True, timeout=60)
-                            usernames.clear()  # Clear only after successful save
-                            time.sleep(random.uniform(5, 15))  # Delay after batch save
-                        except Exception as e:
-                            self.logger.error(f"Failed to save batch for hashtag {hashtag} (post): {e}")
-                            send_alert(f"Failed to save batch for hashtag {hashtag} (post): {e}", "error", account)
-                            continue  # Don't clear usernames, try next batch
+                        saved_count = self._save_batch_with_limit_check(
+                            usernames, account, source_type, hashtag, amount, daily_metric
+                        )
+                        if saved_count == -1:  # Limit reached signal
+                            return []
+                        usernames.clear()
+                        time.sleep(random.uniform(5, 15))
 
                     # Mark media as processed
                     try:
@@ -544,85 +447,35 @@ class InstagramScraper:
                             source_type=source_type
                         )
                         self.logger.info(f"Marked media {media.pk} as processed for hashtag {hashtag}")
-                        cache_key = f"alert_marked_media_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Marked media {media.pk} as processed for hashtag {hashtag}", "info", account)
-                            cache.set(cache_key, True, timeout=60)
                     except Exception as e:
                         self.logger.warning(f"Failed to mark media {media.pk} as processed: {e}")
-                        send_alert(f"Failed to mark media {media.pk} as processed: {e}", "warning", account)
 
                     posts_processed += 1
                     total_posts_processed += 1
-                    self.logger.info(f"Processed post {posts_processed}/{len(top_medias)} for hashtag {hashtag}")
-                    cache_key = f"alert_processed_post_{media.pk}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Processed post {posts_processed}/{len(top_medias)} for hashtag {hashtag}", "info",
-                                   account)
-                        cache.set(cache_key, True, timeout=60)
 
                     # Human-like behavior
                     if random.random() < 0.5:
                         self._like_posts(cl, count=1)
-                        self.logger.info(f"Liked a post for warm-up on media {media.pk}")
-                        cache_key = f"alert_like_post_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Liked a post for warm-up on media {media.pk}", "info", account)
-                            cache.set(cache_key, True, timeout=60)
                         time.sleep(random.uniform(30, 60))
                     if random.random() < 0.2:
                         count = random.randint(3, 7)
                         self._like_posts(cl, count=count)
-                        self.logger.info(f"Liked {count} posts for warm-up")
-                        cache_key = f"alert_like_posts_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Liked {count} posts for warm-up", "info", account)
-                            cache.set(cache_key, True, timeout=60)
                         time.sleep(random.uniform(20, 40))
                     if random.random() < 0.1:
                         count = random.randint(2, 4)
                         self._browse_hashtags(cl, count=count)
-                        self.logger.info(f"Browsed {count} hashtags for warm-up")
-                        cache_key = f"alert_browse_hashtags_{media.pk}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Browsed {count} hashtags for warm-up", "info", account)
-                            cache.set(cache_key, True, timeout=60)
                         time.sleep(random.uniform(40, 80))
+                    time.sleep(random.uniform(120, 300))
 
-                    time.sleep(random.uniform(120, 300))  # Delay between posts
-
-                except ValidationError as e:
-                    self.logger.warning(f"Pydantic validation error for media {media.pk}: {e}")
-                    send_alert(f"Pydantic validation error for media {media.pk}: {e}", "warning", account)
-                    continue
                 except Exception as e:
                     self.logger.warning(f"Failed to process media {media.pk}: {e}")
-                    send_alert(f"Failed to process media {media.pk}: {e}", "warning", account)
                     continue
 
             # Save remaining usernames
             if usernames:
-                try:
-                    with transaction.atomic():
-                        saved_count = self.store_users_enhanced(list(usernames), account, source_type, hashtag)
-                        account.users_scraped_today += saved_count
-                        account.save()
-                        self.logger.info(f"Saved final batch of {saved_count} users for hashtag {hashtag}")
-                        cache_key = f"alert_save_final_batch_{hashtag}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Saved final batch of {saved_count} users for hashtag {hashtag}", "info",
-                                       account)
-                            cache.set(cache_key, True, timeout=60)
-                    time.sleep(random.uniform(5, 15))
-                except Exception as e:
-                    self.logger.error(f"Failed to save final batch for hashtag {hashtag}: {e}")
-                    send_alert(f"Failed to save final batch for hashtag {hashtag}: {e}", "error", account)
-
-            # Fallback if no users scraped and hashtag is invalid
-            if not account.users_scraped_today and not self._validate_hashtag(cl, hashtag):
-                self.logger.warning(f"Invalid or inaccessible hashtag: {hashtag}, falling back to search")
-                send_alert(f"Invalid or inaccessible hashtag: {hashtag}, falling back to search", "warning", account)
-                return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                self._save_batch_with_limit_check(
+                    usernames, account, source_type, hashtag, amount, daily_metric
+                )
 
             self.logger.info(
                 f"Completed scraping for hashtag {hashtag}: "
@@ -631,168 +484,178 @@ class InstagramScraper:
                 f"{total_commenters_processed} total commenters processed, "
                 f"{total_posts_processed} total posts processed"
             )
-            cache_key = f"alert_completed_scraping_{hashtag}_{account.id}"
-            if not cache.get(cache_key):
-                send_alert(
-                    f"Completed scraping for hashtag {hashtag}: "
-                    f"{account.users_scraped_today} total users saved, "
-                    f"{total_likers_processed} total likers processed, "
-                    f"{total_commenters_processed} total commenters processed, "
-                    f"{total_posts_processed} total posts processed", "info", account
-                )
-                cache.set(cache_key, True, timeout=60)
 
-            return []  # Return empty list since saving is handled internally
+            return []
 
         except Exception as e:
             self.logger.error(f"Failed to scrape hashtag {hashtag}: {e}")
-            send_alert(f"Failed to scrape hashtag {hashtag}: {e}", "error", account)
-            self.logger.warning(f"General error for {hashtag}, falling back to search")
-            send_alert(f"General error for {hashtag}, falling back to search", "warning", account)
             if usernames:
-                try:
-                    with transaction.atomic():
-                        saved_count = self.store_users_enhanced(list(usernames), account, source_type, hashtag)
-                        account.users_scraped_today += saved_count
-                        account.save()
-                        self.logger.info(f"Saved {saved_count} users before error for hashtag {hashtag}")
-                        cache_key = f"alert_save_before_error_{hashtag}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(f"Saved {saved_count} users before error for hashtag {hashtag}", "info", account)
-                            cache.set(cache_key, True, timeout=60)
-                    time.sleep(random.uniform(5, 15))
-                except Exception as e:
-                    self.logger.error(f"Failed to save usernames before error for hashtag {hashtag}: {e}")
-                    send_alert(f"Failed to save usernames before error for hashtag {hashtag}: {e}", "error", account)
-            return self._scrape_search(cl, hashtag, amount=1000, account=account)
+                self._save_batch_with_limit_check(
+                    usernames, account, source_type, hashtag, amount, daily_metric
+                )
+            return self._scrape_search(cl, hashtag, amount=amount, account=account)
+
+    def _save_batch_with_limit_check(self, usernames, account, source_type, source_value, amount, daily_metric):
+        """
+        Save batch of users with strict limit enforcement.
+        Returns -1 if limit reached, otherwise returns saved_count.
+        """
+        try:
+            with transaction.atomic():
+                # Refresh to get latest counts
+                account.refresh_from_db()
+                daily_metric.refresh_from_db()
+
+                # Calculate how many we can actually save
+                account_remaining = account.daily_scrape_limit - account.users_scraped_today
+                global_remaining = daily_metric.scraping_threshold - daily_metric.scraped_count
+
+                max_to_save = min(len(usernames), account_remaining, global_remaining)
+
+                if max_to_save <= 0:
+                    self.logger.info(f"Limit reached, cannot save more users")
+                    send_alert(
+                        f"Scraping limit reached. Account: {account.users_scraped_today}/{account.daily_scrape_limit}, "
+                        f"Global: {daily_metric.scraped_count}/{daily_metric.scraping_threshold}",
+                        "warning",
+                        account
+                    )
+                    return -1  # Signal to stop scraping
+
+                # Limit the batch to what we can actually save
+                usernames_to_save = list(usernames)[:max_to_save]
+
+                saved_count = self.store_users_enhanced(usernames_to_save, account, source_type, source_value)
+
+                # Update counters
+                account.users_scraped_today += saved_count
+                account.save()
+
+                daily_metric.scraped_count += saved_count
+                if daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                    daily_metric.scraping_limit_reached = True
+                daily_metric.save()
+
+                self.logger.info(
+                    f"Saved batch of {saved_count} users. "
+                    f"Account: {account.users_scraped_today}/{account.daily_scrape_limit}, "
+                    f"Global: {daily_metric.scraped_count}/{daily_metric.scraping_threshold}"
+                )
+
+                # Check if we hit the limit
+                if account.users_scraped_today >= account.daily_scrape_limit:
+                    send_alert(
+                        f"Account {account.username} reached daily scrape limit ({account.daily_scrape_limit})",
+                        "warning",
+                        account
+                    )
+                    return -1
+
+                if daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                    send_alert(
+                        f"Global scraping threshold reached ({daily_metric.scraping_threshold})",
+                        "warning",
+                        account
+                    )
+                    return -1
+
+                return saved_count
+
+        except Exception as e:
+            self.logger.error(f"Failed to save batch: {e}")
+            send_alert(f"Failed to save batch: {e}", "error", account)
+            return 0
 
     def _scrape_search(self, cl, query, amount, account):
-        """Fallback search method with batch saving and optimized delays"""
+        """Fallback search method with strict limit enforcement"""
         usernames = set()
         batch_size = getattr(settings, 'SCRAPING_BATCH_SIZE', 1000)
         total_users_processed = 0
+
+        # ============= EARLY LIMIT CHECK =============
+        account.refresh_from_db()
+        remaining_capacity = account.daily_scrape_limit - account.users_scraped_today
+
+        if remaining_capacity <= 0:
+            self.logger.info(f"Account {account.username} has reached daily scrape limit")
+            send_alert(f"Account {account.username} has reached daily scrape limit", "info", account)
+            return []
+
+        # Check global threshold
+        today = timezone.now().date()
+        daily_metric, _ = DailyMetric.objects.get_or_create(date=today)
+
+        if daily_metric.scraping_limit_reached or daily_metric.scraped_count >= daily_metric.scraping_threshold:
+            self.logger.warning(f"Global scraping threshold reached")
+            send_alert(f"Global scraping threshold reached for {today}", "warning", account)
+            return []
+
+        # Adjust amount to respect limits
+        amount = min(amount, remaining_capacity, daily_metric.scraping_threshold - daily_metric.scraped_count)
+        # ============================================
+
         try:
             self.logger.info(f"Scraping users for search query {query}, targeting {amount} users")
-            cache_key = f"alert_scrape_search_start_{query}_{account.id}"
-            if not cache.get(cache_key):
-                send_alert(f"Scraping users for search query {query}, targeting {amount} users", "info", account)
-                cache.set(cache_key, True, timeout=60)
+            send_alert(f"Scraping users for search query {query}, targeting {amount} users", "info", account)
 
             results = cl.search_users(query)
             for user in results:
+                # ============= CHECK LIMIT DURING LOOP =============
+                account.refresh_from_db()
+                if account.users_scraped_today >= account.daily_scrape_limit:
+                    self.logger.info(f"Account limit reached during search")
+                    send_alert(f"Account {account.username} reached daily limit during search", "warning", account)
+                    break
+
+                daily_metric.refresh_from_db()
+                if daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                    self.logger.info(f"Global limit reached during search")
+                    send_alert(f"Global threshold reached during search", "warning", account)
+                    break
+                # ==================================================
+
                 try:
-                    if user.username and user.pk:  # Ensure user_id is available
-                        usernames.add((user.username, user.pk))  # Store tuple (username, user_id)
+                    if user.username and user.pk:
+                        usernames.add((user.username, user.pk))
                         total_users_processed += 1
-                        self.logger.info(
-                            f"Added username {user.username} (ID: {user.pk}) for query {query}, "
-                            f"total unique usernames {len(usernames)}, "
-                            f"total users processed {total_users_processed}"
-                        )
-                        cache_key = f"alert_add_user_{user.pk}_{query}_{account.id}"
-                        if not cache.get(cache_key):
-                            send_alert(
-                                f"Added username {user.username} (ID: {user.pk}) for query {query}, "
-                                f"total unique usernames {len(usernames)}, "
-                                f"total users processed {total_users_processed}", "info", account
-                            )
-                            cache.set(cache_key, True, timeout=60)
 
                         # Save usernames in batches
                         if len(usernames) >= batch_size:
-                            try:
-                                with transaction.atomic():
-                                    saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
-                                    account.users_scraped_today += saved_count
-                                    account.save()
-                                self.logger.info(f"Saved batch of {saved_count} usernames for query {query}")
-                                cache_key = f"alert_save_batch_search_{query}_{account.id}"
-                                if not cache.get(cache_key):
-                                    send_alert(f"Saved batch of {saved_count} usernames for query {query}", "info",
-                                               account)
-                                    cache.set(cache_key, True, timeout=60)
-                                usernames.clear()  # Clear only after successful save
-                                time.sleep(random.uniform(5, 15))  # Delay after batch save
-                            except Exception as e:
-                                self.logger.error(f"Failed to save batch for query {query}: {e}")
-                                send_alert(f"Failed to save batch for query {query}: {e}", "error", account)
-                                continue  # Don't clear usernames, try next batch
+                            saved_count = self._save_batch_with_limit_check(
+                                usernames, account, "search", query, amount, daily_metric
+                            )
+                            if saved_count == -1:  # Limit reached
+                                return []
+                            usernames.clear()
+                            time.sleep(random.uniform(5, 15))
 
                     if total_users_processed >= amount:
-                        break  # Respect the amount limit
+                        break
 
                 except Exception as e:
                     self.logger.warning(f"Failed to process user for query {query}: {e}")
-                    cache_key = f"alert_process_user_error_{query}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Failed to process user for query {query}: {e}", "warning", account)
-                        cache.set(cache_key, True, timeout=60)
                     continue
 
             # Save any remaining usernames
             if usernames:
-                try:
-                    with transaction.atomic():
-                        saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
-                        account.users_scraped_today += saved_count
-                        account.save()
-                    self.logger.info(f"Saved final batch of {saved_count} usernames for query {query}")
-                    cache_key = f"alert_save_final_batch_search_{query}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Saved final batch of {saved_count} usernames for query {query}", "info", account)
-                        cache.set(cache_key, True, timeout=60)
-                    time.sleep(random.uniform(5, 15))  # Delay after final batch save
-                except Exception as e:
-                    self.logger.error(f"Failed to save final batch for query {query}: {e}")
-                    send_alert(f"Failed to save final batch for query {query}: {e}", "error", account)
+                self._save_batch_with_limit_check(
+                    usernames, account, "search", query, amount, daily_metric
+                )
 
             self.logger.info(
                 f"Completed scraping for query {query}: "
                 f"{total_users_processed} total users processed, "
                 f"{account.users_scraped_today} total users saved"
             )
-            cache_key = f"alert_completed_search_{query}_{account.id}"
-            if not cache.get(cache_key):
-                send_alert(
-                    f"Completed scraping for query {query}: "
-                    f"{total_users_processed} total users processed, "
-                    f"{account.users_scraped_today} total users saved", "info", account
-                )
-                cache.set(cache_key, True, timeout=60)
 
         except Exception as e:
             self.logger.error(f"Search scrape failed for {query}: {e}")
-            send_alert(f"Search scrape failed for {query}: {e}", "error", account)
             if usernames:
-                try:
-                    with transaction.atomic():
-                        saved_count = self.store_users_enhanced(list(usernames), account, "search", query)
-                        account.users_scraped_today += saved_count
-                        account.save()
-                    self.logger.info(f"Saved {saved_count} usernames before error for query {query}")
-                    cache_key = f"alert_save_before_error_search_{query}_{account.id}"
-                    if not cache.get(cache_key):
-                        send_alert(f"Saved {saved_count} usernames before error for query {query}", "info", account)
-                        cache.set(cache_key, True, timeout=60)
-                    time.sleep(random.uniform(5, 15))  # Delay after error save
-                except Exception as e:
-                    self.logger.error(f"Failed to save usernames before error for query {query}: {e}")
-                    send_alert(f"Failed to save usernames before error for query {query}: {e}", "error", account)
+                self._save_batch_with_limit_check(
+                    usernames, account, "search", query, amount, daily_metric
+                )
 
-        return []  # Return empty list since saving is handled internally
-
-    def _calculate_scrape_amount(self, account, requested_amount):
-        """Calculate safe scraping amount"""
-        base_limit = getattr(settings, 'SCRAPING_LIMIT_PER_SOURCE', 1000)
-        if account.account_age_days < 30:
-            base_limit = min(base_limit, 200)
-        elif account.account_age_days < 90:
-            base_limit = min(base_limit, 500)
-        health_multiplier = account.health_score / 100
-        adjusted_limit = int(base_limit * health_multiplier)
-        remaining_daily = account.daily_scrape_limit - account.users_scraped_today
-        amount = min(adjusted_limit, remaining_daily, requested_amount or base_limit)
-        return max(0, amount)
+        return []
 
     def _handle_client_error(self, account, error):
         """Handle client errors with exponential backoff"""
@@ -820,7 +683,6 @@ class InstagramScraper:
             self.logger.error(f"Failed to handle client error for {account.username}: {e}")
             send_alert(f"Failed to handle client error for {account.username}: {e}", "error", account)
 
-
     def _validate_hashtag(self, cl, hashtag):
         """Validate if hashtag exists and is accessible"""
         try:
@@ -831,10 +693,15 @@ class InstagramScraper:
             send_alert(f"Invalid hashtag {hashtag}: {e}", "warning")
             return False
 
+
     def store_users_enhanced(self, usernames, account, source_type, source_value):
-        """Store minimal user data in bulk and queue detailed enrichment"""
+        """
+        Store minimal user data in bulk with strict limit enforcement.
+        Returns actual number of users saved (may be less than requested).
+        """
         from .tasks import enrich_user_details_task
         from django.db import transaction
+        from django.utils import timezone
 
         saved_count = 0
         skipped_count = 0
@@ -842,6 +709,49 @@ class InstagramScraper:
 
         try:
             with transaction.atomic():
+                # ============= LIMIT CHECK BEFORE SAVING =============
+                account.refresh_from_db()
+
+                # Check account limit
+                remaining_capacity = account.daily_scrape_limit - account.users_scraped_today
+                if remaining_capacity <= 0:
+                    self.logger.info(
+                        f"Account {account.username} has reached daily scrape limit, cannot store more users"
+                    )
+                    send_alert(
+                        f"Account {account.username} reached daily scrape limit ({account.daily_scrape_limit})",
+                        "warning",
+                        account
+                    )
+                    return 0
+
+                # Check global limit
+                today = timezone.now().date()
+                daily_metric, _ = DailyMetric.objects.get_or_create(date=today)
+
+                global_remaining = daily_metric.scraping_threshold - daily_metric.scraped_count
+                if global_remaining <= 0 or daily_metric.scraping_limit_reached:
+                    self.logger.warning(
+                        f"Global scraping threshold reached, cannot store more users"
+                    )
+                    send_alert(
+                        f"Global scraping threshold reached ({daily_metric.scraping_threshold})",
+                        "warning",
+                        account
+                    )
+                    return 0
+
+                # Calculate actual number we can save
+                max_can_save = min(len(usernames), remaining_capacity, global_remaining)
+
+                if max_can_save <= 0:
+                    self.logger.info(f"Cannot save any users due to limits")
+                    return 0
+
+                # Limit the batch to what we can actually save
+                usernames = usernames[:max_can_save]
+                # ====================================================
+
                 # Check existing users to avoid duplicates
                 existing_user_ids = set(
                     ScrapedUser.objects.filter(
@@ -861,9 +771,9 @@ class InstagramScraper:
                             account=account,
                             source_type=source_type,
                             source_value=source_value,
-                            is_active=True,  # Assume active until proven otherwise
-                            details_fetched=False,  # Mark as not enriched
-                            is_private=False  # Initialize as not private
+                            is_active=True,
+                            details_fetched=False,
+                            is_private=False
                         ))
                     except Exception as e:
                         self.logger.error(f"Failed to prepare user {username} (ID: {user_id}): {e}")
@@ -873,14 +783,35 @@ class InstagramScraper:
                 if users_to_create:
                     ScrapedUser.objects.bulk_create(users_to_create, ignore_conflicts=True)
                     saved_count = len(users_to_create)
-                    self.logger.info(f"Stored {saved_count} users, skipped {skipped_count} for {source_value}")
+
+                    # ============= UPDATE COUNTERS =============
+                    # Note: The calling function should also update these,
+                    # but we do it here for safety
+                    account.users_scraped_today += saved_count
+                    account.save()
+
+                    daily_metric.scraped_count += saved_count
+                    if daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                        daily_metric.scraping_limit_reached = True
+                    daily_metric.save()
+                    # ==========================================
+
+                    self.logger.info(
+                        f"Stored {saved_count} users, skipped {skipped_count} for {source_value}. "
+                        f"Account: {account.users_scraped_today}/{account.daily_scrape_limit}, "
+                        f"Global: {daily_metric.scraped_count}/{daily_metric.scraping_threshold}"
+                    )
                     cache_key = f"alert_store_users_{source_value}_{account.id}"
                     if not cache.get(cache_key):
-                        send_alert(f"Stored {saved_count} users, skipped {skipped_count} for {source_value}", "info",
-                                   account)
+                        send_alert(
+                            f"Stored {saved_count} users, skipped {skipped_count} for {source_value}",
+                            "info",
+                            account
+                        )
                         cache.set(cache_key, True, timeout=60)
+
                     # Queue enrichment task for saved users
-                    # enrich_user_details_task.delay()
+                    enrich_user_details_task.delay()
                 else:
                     self.logger.info(f"No users stored, skipped {skipped_count} for {source_value}")
                     cache_key = f"alert_store_users_{source_value}_{account.id}"

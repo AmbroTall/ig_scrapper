@@ -1,139 +1,103 @@
+<!-- bot_activity.html -->
 {% extends 'dmbot/base.html' %}
 {% block content %}
-<div class="space-y-8">
-    <!-- Header -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-        <div>
-            <h1 class="text-3xl font-bold text-gray-900">Bot Activities</h1>
-            <p class="mt-1 text-sm text-gray-500">View all automation activities and manage tasks</p>
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-primary to-secondary">
+            <h2 class="text-xl font-bold text-white">Bot Activity</h2>
+            <p class="mt-1 text-sm text-indigo-100">Monitor active and scheduled tasks</p>
         </div>
-        <div class="mt-4 sm:mt-0">
-            <a href="{% url 'status' %}" class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
-                Back to Dashboard
-            </a>
-        </div>
-    </div>
-
-    <!-- Search Bar -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <form method="get" class="flex gap-2">
-            <div class="relative flex-1">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                </div>
-                <input type="text" name="search" value="{{ search_query }}" placeholder="Search activities..." class="pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm w-full">
+        <div class="p-6">
+            <!-- Search Bar -->
+            <div class="mb-4">
+                <form method="get" class="flex">
+                    <input type="text" name="search" value="{{ search_query }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                           placeholder="Search tasks or usernames...">
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded-r-lg hover:bg-indigo-700">
+                        Search
+                    </button>
+                </form>
             </div>
-            <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm">Search</button>
-            {% if search_query %}
-            <a href="{% url 'bot_activity' %}" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm">Clear</a>
-            {% endif %}
-        </form>
-    </div>
 
-    <!-- Activities List -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">Activity Log</h2>
-        </div>
-        <div class="divide-y divide-gray-200">
+            <!-- Task Table -->
             {% if activities %}
-                {% for item in activities %}
-                <div class="px-6 py-4">
-                    <div class="flex items-start justify-between">
-                        <div class="flex items-start space-x-3 flex-1">
-                            <div class="flex-shrink-0 mt-0.5">
-                                <div class="rounded-lg p-2 {% if item.activity.severity == 'info' %}bg-blue-100{% elif item.activity.severity == 'warning' %}bg-yellow-100{% elif item.activity.severity == 'error' %}bg-red-100{% else %}bg-red-200{% endif %}">
-                                    <svg class="w-5 h-5 {% if item.activity.severity == 'info' %}text-blue-600{% elif item.activity.severity == 'warning' %}text-yellow-600{% elif item.activity.severity == 'error' %}text-red-600{% else %}text-red-900{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        {% if item.activity.severity == 'info' %}
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        {% elif item.activity.severity == 'warning' %}
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                        {% else %}
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        {% endif %}
-                                    </svg>
-                                </div>
-                            </div>
-                            <div class="flex-1">
-                                <p class="text-sm text-gray-700">{{ item.activity.message }}</p>
-                                <div class="mt-1 flex items-center space-x-2">
-                                    <p class="text-xs text-gray-500">{{ item.activity.account.username|default:"System" }}</p>
-                                    <span class="text-xs text-gray-400">•</span>
-                                    <p class="text-xs text-gray-500">{{ item.activity.timestamp|date:"Y-m-d H:i" }}</p>
-                                </div>
-                            </div>
-                        </div>
-                        {% if item.task_id %}
-                        <form method="post" action="{% url 'bot_activity' %}" class="flex items-center">
-                            {% csrf_token %}
-                            <input type="hidden" name="task_id" value="{{ item.task_id }}">
-                            <button type="submit" class="text-sm text-red-600 hover:text-red-900" onclick="return confirm('Are you sure you want to cancel this task?');">Cancel</button>
-                        </form>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for activity in activities %}
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ activity.message }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ activity.username }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {% if activity.timestamp %}
+                                    {{ activity.timestamp|date:"Y-m-d H:i" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ activity.status|capfirst }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                {% if activity.status == 'scheduled' %}
+                                <form method="post" action="{% url 'cancel_scheduled_task' activity.task_id %}" class="inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="text-red-600 hover:text-red-800 font-medium">
+                                        Cancel
+                                    </button>
+                                </form>
+                                {% elif activity.status == 'running' %}
+                                <form method="post" action="{% url 'bot_activity' %}" class="inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="task_id" value="{{ activity.task_id }}">
+                                    <button type="submit" class="text-red-600 hover:text-red-800 font-medium">
+                                        Cancel
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if activities.has_other_pages %}
+            <div class="mt-4">
+                <nav class="flex justify-between items-center">
+                    <div>
+                        {% if activities.has_previous %}
+                        <a href="?page={{ activities.previous_page_number }}&search={{ search_query }}"
+                           class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                            Previous
+                        </a>
                         {% endif %}
                     </div>
-                </div>
-                {% endfor %}
-            {% else %}
-            <div class="px-6 py-8 text-center">
-                <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p class="mt-2 text-sm text-gray-500">
-                    {% if search_query %}
-                        No activities found matching "{{ search_query }}"
-                    {% else %}
-                        No recent activities
-                    {% endif %}
-                </p>
-                <a href="{% url 'input_form' %}" class="mt-6 inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
-                    Schedule Scraping
-                </a>
-            </div>
-            {% endif %}
-        </div>
-        {% if activities.paginator.num_pages > 1 %}
-        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
-            <div class="flex items-center justify-between">
-                <div class="text-sm text-gray-700">
-                    Page <span class="font-semibold">{{ activities.number }}</span> of <span class="font-semibold">{{ activities.paginator.num_pages }}</span>
-                </div>
-                <nav class="flex items-center space-x-2">
-                    {% if activities.has_previous %}
-                    <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        First
-                    </a>
-                    <a href="?page={{ activities.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Previous
-                    </a>
-                    {% else %}
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        First
-                    </span>
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Previous
-                    </span>
-                    {% endif %}
-                    {% if activities.has_next %}
-                    <a href="?page={{ activities.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Next
-                    </a>
-                    <a href="?page={{ activities.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Last
-                    </a>
-                    {% else %}
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Next
-                    </span>
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Last
-                    </span>
-                    {% endif %}
+                    <div class="text-sm text-gray-700">
+                        Page {{ activities.number }} of {{ activities.paginator.num_pages }}
+                    </div>
+                    <div>
+                        {% if activities.has_next %}
+                        <a href="?page={{ activities.next_page_number }}&search={{ search_query }}"
+                           class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                            Next
+                        </a>
+                        {% endif %}
+                    </div>
                 </nav>
             </div>
+            {% endif %}
+            {% else %}
+            <p class="text-sm text-gray-500">No active or scheduled tasks.</p>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
 </div>
 {% endblock %}

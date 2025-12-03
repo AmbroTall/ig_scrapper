@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import transaction
 from instagrapi.exceptions import ClientError, RateLimitError
 from .filter import UserFilter
-from .models import DMTemplate, DMCampaign, DMLog, Alert, ScrapedUser, Account
+from .models import DMTemplate, DMCampaign, DMLog, Alert, ScrapedUser, Account, FallbackMessage
 from .utils import setup_client, send_alert
 import os
 from openai import OpenAI
@@ -43,7 +43,7 @@ class DMSender:
                 cache.set(cache_key, True, timeout=60)
             return cached_dm
         try:
-            prompt = f"Generate a friendly, concise Instagram DM (under 100 chars) based on template: '{template}'. Personalize for user bio: '{bio}'. Avoid salesy tone, sound human."
+            prompt = f"Generate a friendly, concise Instagram DM (brief warm message) based on template: '{template}'. Personalize for user bio: '{bio}'. Avoid salesy tone, sound human."
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
@@ -59,11 +59,18 @@ class DMSender:
             return dm_text
         except Exception as e:
             self.logger.error(f"DeepSeek DM generation failed: {e}")
-            cache_key = f"alert_dm_generation_failed_{hash(bio)}_{hash(template)}"
+            cache_key = f"alert_dm_generation_failed_{hash(bio)}_{hash(template)} sending default message"
             if not cache.get(cache_key):
                 send_alert(f"DeepSeek DM generation failed: {e}", "error")
                 cache.set(cache_key, True, timeout=60)
-            return template
+            return self.get_fallback_message()
+
+    def get_fallback_message(self):
+        """Get active fallback or default"""
+        fallback = FallbackMessage.objects.filter(is_active=True).first()
+        if fallback:
+            return fallback.message
+        return "Hey! Loved your profile — let's connect"
 
     def perform_activity(self, cl, account, campaign):
         """Perform light Instagram activity to mimic human behavior"""
@@ -103,7 +110,34 @@ class DMSender:
 
     def _browse_hashtags(self, cl, count=3):
         try:
-            hashtags = ["art", "design", "photography"]
+            hashtags = [
+                "art", "design", "photography", "artist", "artwork", "creative", "illustration",
+                "drawing", "painting", "digitalart", "graphicdesign", "artoftheday", "photooftheday",
+                "fineart", "modernart", "contemporaryart", "artgallery", "artcollectors",
+                "artlovers", "instaart", "instadesign", "instaphotography", "visualart",
+                "aesthetic", "creativity", "inspiration", "sketch", "sketchbook", "portrait",
+                "landscape", "abstract", "minimalism", "designinspiration", "interiordesign",
+                "architecture", "branding", "logo", "typography", "motiondesign", "animation",
+                "3dart", "3dmodeling", "digitalpainting", "conceptart", "characterdesign",
+                "photographer", "photoart", "streetphotography", "travelphotography",
+                "naturephotography", "blackandwhite", "bnw", "portraitphotography",
+                "fashionphotography", "filmphotography", "macro", "nightphotography",
+                "artcommunity", "artlife", "creativeprocess", "artistic", "mixedmedia",
+                "surrealism", "expressionism", "popart", "realism", "gallery", "museum",
+                "artshow", "artstudio", "artoftheworld", "designlife", "uxdesign", "uidesign",
+                "productdesign", "industrialdesign", "graphicdesigner", "photoshoot", "lens",
+                "dslr", "mirrorless", "lightroom", "photoshop", "capture", "composition",
+                "color", "visualdesign", "artdirection", "creativedirection", "illustrator",
+                "artistsoninstagram", "designers", "creatives", "handmade", "craft", "collage",
+                "digitalillustration", "drawingoftheday", "artdaily", "photodaily",
+                "fineartphotography", "artgram", "creativeart", "instaartist", "artoftheweek",
+                "designcommunity", "colorgrading", "photoediting", "creativephotography",
+                "editorialdesign", "fashiondesign", "artjournal", "paintingart", "artcollection",
+                "inspired", "designstudio", "creativeindustry", "illustrationart", "designthinking",
+                "artworld", "photojournalism", "visualstorytelling", "photoediting", "canon",
+                "nikon", "sonyalpha", "fujifilm", "leica", "cinematography", "streetart",
+                "graffiti", "urbanart", "digitalcreator", "contentcreator", "visuals", "aestheticart"
+            ]
             for hashtag in random.sample(hashtags, min(count, len(hashtags))):
                 cl.hashtag_info(hashtag)
                 self.logger.info(f"Browsed hashtag: {hashtag}")

@@ -1,0 +1,54 @@
+<!-- templates/dmbot/export_modal.html -->
+{% load humanize %}
+<div class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-screen overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
+            <h2 class="text-2xl font-bold text-gray-900">{{ title }}</h2>
+            <button onclick="document.getElementById('exportModal').remove()" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="p-8 space-y-8">
+            <div class="text-center py-8 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl">
+                <p class="text-5xl font-bold text-indigo-700">{{ total_count|intcomma }}</p>
+                <p class="text-lg text-gray-700 mt-2">records ready to export</p>
+            </div>
+
+            <form method="get" class="space-y-6">
+                {% if search_query %}
+                <input type="hidden" name="search" value="{{ search_query }}">
+                {% endif %}
+
+                <div>
+                    <h3 class="text-lg font-semibold mb-4">Select Columns to Export</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {% for key, label in fields %}
+                        <label class="flex items-center space-x-3 cursor-pointer p-4 rounded-lg border-2 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 transition">
+                            <input type="checkbox" name="fields" value="{{ key }}" checked
+                                   class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500">
+                            <span class="font-medium text-gray-800">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-4 pt-6 border-t">
+                    <button type="button" onclick="document.getElementById('exportModal').remove()"
+                            class="px-6 py-3 border rounded-lg hover:bg-gray-50 font-medium">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg font-bold shadow-lg hover:from-indigo-700 hover:to-purple-700">
+                        Download CSV
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.body.insertAdjacentHTML('beforeend', '{{ request.get_full_path|escapejs }}');
+</script>

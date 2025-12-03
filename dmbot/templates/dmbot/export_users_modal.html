@@ -1,0 +1,73 @@
+<!-- templates/dmbot/export_users_modal.html -->
+{% load humanize %}
+<div id="exportModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-screen overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
+            <h2 class="text-2xl font-bold text-indigo-900">{{ title }}</h2>
+            <button onclick="document.getElementById('exportModal').remove()" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+
+        <form method="get" class="p-8 space-y-8">
+            <div class="text-center py-6 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl">
+                <p class="text-5xl font-bold text-indigo-700">{{ total_count|intcomma }}</p>
+                <p class="text-lg text-gray-700">users match your filters</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Columns -->
+                <div>
+                    <h3 class="text-lg font-bold mb-4">Columns to Export</h3>
+                    <div class="space-y-3 max-h-96 overflow-y-auto">
+                        {% for key, label in fields %}
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 border">
+                            <input type="checkbox" name="fields" value="{{ key }}" checked class="w-5 h-5 text-indigo-600 rounded">
+                            <span class="font-medium">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div>
+                    <h3 class="text-lg font-bold mb-4">Filters (Optional)</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Date Range (Scraped)</label>
+                            <div class="grid grid-cols-2 gap-3">
+                                <input type="date" name="date_from" class="px-4 py-2 border rounded-lg">
+                                <input type="date" name="date_to" class="px-4 py-2 border rounded-lg">
+                            </div>
+                        </div>
+                        <input type="text" name="profession" placeholder="Profession (e.g. photographer)" class="w-full px-4 py-2 border rounded-lg">
+                        <input type="text" name="country" placeholder="Country (e.g. USA)" class="w-full px-4 py-2 border rounded-lg">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">DM Status</label>
+                            <select name="dm_sent" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="">All</option>
+                                <option value="yes">DM Sent</option>
+                                <option value="no">Not Sent</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Account Active</label>
+                            <select name="active" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="">All</option>
+                                <option value="yes">Active Only</option>
+                                <option value="no">Inactive Only</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-4 pt-6 border-t">
+                <button type="button" onclick="document.getElementById('exportModal').remove()" class="px-6 py-3 border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" name="download" value="true" class="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold rounded-lg shadow-lg hover:shadow-xl">
+                    Download CSV
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

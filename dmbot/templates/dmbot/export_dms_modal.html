@@ -1,0 +1,80 @@
+<!-- templates/dmbot/export_dms_modal.html -->
+{% load humanize %}
+<div id="exportModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-screen overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
+            <h2 class="text-2xl font-bold text-purple-900">Export Sent DMs</h2>
+            <button onclick="document.getElementById('exportModal').remove()" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <form method="get" class="p-8 space-y-8">
+            <!-- Total Count -->
+            <div class="text-center py-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl">
+                <p class="text-5xl font-bold text-purple-700">{{ total_count|intcomma }}</p>
+                <p class="text-lg text-gray-700 mt-1">DMs ready to export</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Columns Selection -->
+                <div>
+                    <h3 class="text-lg font-bold mb-4 text-gray-800">Columns to Include</h3>
+                    <div class="space-y-3 max-h-96 overflow-y-auto pr-2">
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-purple-50 border transition">
+                            <input type="checkbox" name="fields" value="sender_account__username" checked class="w-5 h-5 text-purple-600 rounded focus:ring-purple-500">
+                            <span class="font-medium">From Account</span>
+                        </label>
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-purple-50 border transition">
+                            <input type="checkbox" name="fields" value="recipient_user__username" checked class="w-5 h-5 text-purple-600 rounded">
+                            <span class="font-medium">To User (@username)</span>
+                        </label>
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-purple-50 border transition">
+                            <input type="checkbox" name="fields" value="message" checked class="w-5 h-5 text-purple-600 rounded">
+                            <span class="font-medium">Message Content</span>
+                        </label>
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-purple-50 border transition">
+                            <input type="checkbox" name="fields" value="sent_at" checked class="w-5 h-5 text-purple-600 rounded">
+                            <span class="font-medium">Sent At</span>
+                        </label>
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-purple-50 border transition">
+                            <input type="checkbox" name="fields" value="campaign__name" checked class="w-5 h-5 text-purple-600 rounded">
+                            <span class="font-medium">Campaign Name</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div>
+                    <h3 class="text-lg font-bold mb-4 text-gray-800">Filter by Date Sent</h3>
+                    <div class="bg-gray-50 p-6 rounded-xl space-y-5">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">From Date</label>
+                            <input type="date" name="date_from" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">To Date</label>
+                            <input type="date" name="date_to" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        </div>
+                        <p class="text-xs text-gray-500 text-center mt-4">
+                            Leave blank to include all dates
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex justify-end gap-4 pt-6 border-t border-gray-200">
+                <button type="button" onclick="document.getElementById('exportModal').remove()"
+                        class="px-6 py-3 border border-gray-300 rounded-lg font-medium hover:bg-gray-50 transition">
+                    Cancel
+                </button>
+                <button type="submit" name="download" value="true" class="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transform hover:scale-105 transition">
+                    Download CSV Now
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

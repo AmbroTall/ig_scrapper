@@ -55,10 +55,7 @@
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Accounts
                     </a>
-                    <a href="{% url 'enrichment_form' %}"
-                       class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
-                        Schedule Enrichment
-                    </a>
+
                     <a href="{% url 'input_form' %}"
                        class="nav-link inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:text-primary hover:bg-gray-50 rounded-lg transition-colors">
                         Schedule Scraping
@@ -195,6 +192,24 @@
     // Poll every   30 seconds
     setInterval(refreshActivities, 30000);
     refreshActivities(); // Initial load
+</script>
+<script>
+function openExport(type) {
+    const overlay = document.createElement('div');
+    overlay.id = 'exportModal';
+    overlay.innerHTML = '<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"><div class="bg-white p-10 rounded-xl"><p class="text-lg">Loading export options...</p></div></div>';
+    document.body.appendChild(overlay);
+
+    const params = new URLSearchParams(window.location.search);
+    fetch(`/export/${type}/?${params}`)
+        .then(r => r.text())
+        .then(html => {
+            overlay.innerHTML = html;
+        })
+        .catch(() => {
+            overlay.innerHTML = '<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"><div class="bg-red-100 p-8 rounded-xl text-red-700">Error loading export tool</div></div>';
+        });
+}
 </script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 ## 1. Improved Models (models.py)
 
 from django.db import models
+from django.db.models import JSONField
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 import json
@@ -240,9 +241,12 @@ class DMLog(models.Model):
     )
     message = models.TextField()
     sent_at = models.DateTimeField(default=timezone.now)
+    campaign = models.ForeignKey('DMCampaign', on_delete=models.SET_NULL, null=True, blank=True)
+    csv_upload = models.ForeignKey('DMCsvUpload', on_delete=models.SET_NULL, null=True, blank=True)  # Add this
 
     def __str__(self):
         return f"DM from {self.sender_account.username} to {self.recipient_user.username} at {self.sent_at}"
+
 
 class ProcessedMedia(models.Model):
     media_id = models.CharField(max_length=100, db_index=True)  # Instagram media.pk
@@ -275,3 +279,108 @@ class DMCsvUpload(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.uploaded_at})"
+
+
+class ScheduledTask(models.Model):
+    TASK_TYPES = (
+        ('scrape', 'Scraping'),
+        ('enrich', 'Enrichment'),
+        ('dm_campaign', 'DM Campaign'),
+        ('dm_csv', 'DM CSV'),
+    )
+    STATUS_CHOICES = (
+        ('scheduled', 'Scheduled'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    )
+
+    task_type = models.CharField(max_length=20, choices=TASK_TYPES)
+    task_id = models.CharField(max_length=36, unique=True, null=True, blank=True)  # Celery task ID
+    scheduled_time = models.DateTimeField()
+    parameters = JSONField()  # Store task parameters (e.g., hashtags, account IDs)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.get_task_type_display()} scheduled for {self.scheduled_time}"
+
+
+class FallbackMessage(models.Model):
+    name = models.CharField(max_length=100)
+    message = models.TextField(max_length=500)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} {'(Active)' if self.is_active else ''}"
+
+    def save(self, *args, **kwargs):
+        # If this one is being set to active → deactivate all others
+        if self.is_active:
+            FallbackMessage.objects.filter(is_active=True).update(is_active=False)
+        super().save(*args, **kwargs)
+
+    class Meta:
+        verbose_name = "Fallback DM Message"
+        ordering = ['-is_active', '-created_at']
+
+
+# models.py
+class DailyMetric(models.Model):
+    date = models.DateField(default=timezone.now, unique=True)
+    scraped_count = models.IntegerField(default=0)
+    enriched_count = models.IntegerField(default=0)
+    dm_sent_count = models.IntegerField(default=0)
+
+    # NEW: Scraping Threshold
+    scraping_threshold = models.PositiveIntegerField(
+        default=45000,
+        help_text="Max users to scrape per day. Scraping stops when reached."
+    )
+    scraping_limit_reached = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.date} | Scraped: {self.scraped_count}/{self.scraping_threshold}"
+
+
+# class DailyMetric(models.Model):
+#     date = models.DateField(default=timezone.now, unique=True)
+#
+#     # NEW: Scraping Threshold
+#     scraping_threshold = models.PositiveIntegerField(
+#         default=45000,
+#         help_text="Max users to scrape per day. Scraping stops when reached."
+#     )
+#     scraping_limit_reached = models.BooleanField(default=False)
+#
+#     @property
+#     def scraped_count(self):
+#         """Count users scraped on this date"""
+#         return ScrapedUser.objects.filter(
+#             scraped_at__date=self.date
+#         ).count()
+#
+#     @property
+#     def enriched_count(self):
+#         """Count users enriched on this date"""
+#         return ScrapedUser.objects.filter(
+#             enriched_at__date=self.date,
+#             details_fetched=True
+#         ).count()
+#
+#     @property
+#     def dm_sent_count(self):
+#         """Count DMs sent on this date"""
+#         return DMLog.objects.filter(
+#             sent_at__date=self.date
+#         ).count()
+#
+#     def __str__(self):
+#         return f"{self.date} | Scraped: {self.scraped_count}/{self.scraping_threshold}"
+#
+#     class Meta:
+#         ordering = ['-date']

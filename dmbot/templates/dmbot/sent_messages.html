@@ -7,6 +7,12 @@
             <h1 class="text-3xl font-bold text-gray-900">Sent Messages</h1>
             <p class="mt-1 text-sm text-gray-500">View all direct messages sent to users</p>
         </div>
+        <a href="#" onclick="openExport('dms')" class="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export DM History
+        </a>
         <a href="{% url 'status' %}" class="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
             Back to Dashboard
         </a>
@@ -56,7 +62,7 @@
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sent At</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sender Account</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Response</th>
+<!--                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Response</th>-->
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
@@ -66,15 +72,15 @@
                         <td class="px-6 py-4 text-sm text-gray-700 max-w-md truncate">{{ message.message }}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ message.sent_at|date:"Y-m-d H:i" }}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ message.sender_account.username }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            {% if message.recipient_user.dm_response_received %}
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                Response Received
-                            </span>
-                            {% else %}
-                            <span class="text-xs text-gray-400">No response</span>
-                            {% endif %}
-                        </td>
+<!--                        <td class="px-6 py-4 whitespace-nowrap">-->
+<!--                            {% if message.recipient_user.dm_response_received %}-->
+<!--                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">-->
+<!--                                Response Received-->
+<!--                            </span>-->
+<!--                            {% else %}-->
+<!--                            <span class="text-xs text-gray-400">No response</span>-->
+<!--                            {% endif %}-->
+<!--                        </td>-->
                     </tr>
                     {% endfor %}
                 </tbody>

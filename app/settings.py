@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     "django_extensions",
     'django_celery_beat',
+    'django.contrib.humanize',
     'dmbot'
 ]
 
@@ -139,4 +140,9 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dmbot.tasks.clean_alerts_task',
         'schedule': 3600,
     },
+    'reset_stale_accounts': {
+        'task': 'dmbot.tasks.reset_stale_accounts_task',
+        'schedule': 300,  # 5 minutes in seconds
+    },
+
 }

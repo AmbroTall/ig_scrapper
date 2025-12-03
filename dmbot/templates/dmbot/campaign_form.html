@@ -1,18 +1,17 @@
-<!-- campaign_form.html (modified) -->
+<!-- templates/dmbot/campaign_form.html -->
 {% extends 'dmbot/base.html' %}
 {% block content %}
 <div class="max-w-4xl mx-auto">
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <!-- Header -->
-        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-primary to-secondary">
+        <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-indigo-600 to-purple-600">
             <h2 class="text-2xl font-bold text-white">Create DM Campaign</h2>
             <p class="mt-1 text-sm text-indigo-100">Choose a mode and launch a new automated messaging campaign</p>
         </div>
 
         {% if not templates %}
-        <!-- No Templates Warning -->
         <div class="p-6">
-            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
                 <div class="flex items-start">
                     <svg class="w-6 h-6 text-yellow-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
@@ -20,7 +19,7 @@
                     <div>
                         <h3 class="text-sm font-medium text-yellow-900">No Active Templates</h3>
                         <p class="mt-1 text-sm text-yellow-700">You need to create a DM template before launching a campaign.</p>
-                        <a href="{% url 'template_form' %}" class="mt-3 inline-flex items-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors text-sm font-medium">
+                        <a href="{% url 'template_form' %}" class="mt-3 inline-flex items-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm font-medium">
                             Create Template
                         </a>
                     </div>
@@ -28,237 +27,258 @@
             </div>
         </div>
         {% else %}
-        <!-- Campaign Form -->
+        <!-- Campaign پیشنهاد -->
         <form method="post" class="p-6 space-y-6">
             {% csrf_token %}
             <!-- Mode Selection -->
             <div>
-                <label for="mode" class="block text-sm font-medium text-gray-700 mb-2">
-                    Campaign Mode <span class="text-red-500">*</span>
-                </label>
-                <select
-                    id="mode"
-                    name="mode"
-                    required
-                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                    onchange="toggleFormFields(this.value)"
-                >
+                <label for="mode" class="block text-sm font-medium text-gray-700 mb-2">Campaign Mode <span class="text-red-500">*</span></label>
+                <select id="mode" name="mode" required onchange="toggleFormFields(this.value)" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
                     <option value="campaign" {% if mode == 'campaign' %}selected{% endif %}>Campaign-Based</option>
                     <option value="csv" {% if mode == 'csv' %}selected{% endif %}>CSV-Based</option>
                 </select>
             </div>
 
             <div id="campaign-fields" class="{% if mode == 'csv' %}hidden{% endif %}">
-                <!-- Campaign Name -->
                 <div>
-                    <label for="name" class="block text-sm font-medium text-gray-700 mb-2">
-                        Campaign Name <span class="text-red-500">*</span>
-                    </label>
-                    <input
-                        type="text"
-                        id="name"
-                        name="name"
-                        required
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                        placeholder="e.g., Photography Outreach Q4"
-                    >
+                    <label for="name" class="block text-sm font-medium text-gray-700 mb-2">Campaign Name <span class="text-red-500">*</span></label>
+                    <input type="text" id="name" name="name" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Photography Outreach Q4">
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Template Selection -->
                     <div>
-                        <label for="template_id" class="block text-sm font-medium text-gray-700 mb-2">
-                            DM Template <span class="text-red-500">*</span>
-                        </label>
-                        <select
-                            id="template_id"
-                            name="template_id"
-                            required
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                        >
+                        <label for="template_id" class="block text-sm font-medium text-gray-700 mb-2">DM Template <span class="text-red-500">*</span></label>
+                        <select id="template_id" name="template_id" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
                             <option value="">Select a template</option>
                             {% for template in templates %}
-                                <option value="{{ template.id }}">
-                                    {{ template.name }} - {{ template.category|capfirst|default:"General" }} ({{ template.success_rate|floatformat:1 }}% success)
-                                </option>
+                            <option value="{{ template.id }}">{{ template.name }} - {{ template.category|capfirst|default:"General" }} ({{ template.success_rate|floatformat:1 }}%)</option>
                             {% endfor %}
                         </select>
                     </div>
-
-                    <!-- Account Selection -->
                     <div>
-                        <label for="accounts" class="block text-sm font-medium text-gray-700 mb-2">
-                            Accounts <span class="text-red-500">*</span>
-                        </label>
-                        <select
-                            id="accounts"
-                            name="accounts"
-                            multiple
-                            required
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow h-32"
-                        >
+                        <label for="accounts" class="block text-sm font-medium text-gray-700 mb-2">Accounts <span class="text-red-500">*</span></label>
+                        <select id="accounts" name="accounts" multiple required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 h-32">
                             {% for account in accounts %}
-                                <option value="{{ account.id }}">
-                                    {{ account.username }} (Health: {{ account.health_score }}%)
-                                </option>
+                            <option value="{{ account.id }}">{{ account.username }} (Health: {{ account.health_score }}%)</option>
                             {% endfor %}
                         </select>
-                        <p class="mt-2 text-xs text-gray-500">Hold Ctrl (Windows) or Cmd (Mac) to select multiple</p>
+                        <p class="mt-2 text-xs text-gray-500">Hold Ctrl/Cmd to select multiple</p>
                     </div>
                 </div>
 
-                <!-- Filters Section -->
-                <div class="border-t border-gray-200 pt-6">
-                    <h3 class="text-base font-semibold text-gray-900 mb-4 flex items-center">
-                        <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                        </svg>
-                        Target Filters (Optional)
-                    </h3>
-
+                <div class="border-t pt-6">
+                    <h3 class="text-base font-semibold text-gray-900 mb-4">Target Filters (Optional)</h3>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                        <!-- Professions -->
-                        <div>
-                            <label for="professions" class="block text-sm font-medium text-gray-700 mb-2">
-                                Professions
-                            </label>
-                            <input
-                                type="text"
-                                id="professions"
-                                name="professions"
-                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                                placeholder="e.g., photographer, artist"
-                            >
-                        </div>
-
-                        <!-- Countries -->
-                        <div>
-                            <label for="countries" class="block text-sm font-medium text-gray-700 mb-2">
-                                Countries
-                            </label>
-                            <input
-                                type="text"
-                                id="countries"
-                                name="countries"
-                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                                placeholder="e.g., usa, uk, canada"
-                            >
-                        </div>
-
-                        <!-- Keywords -->
-                        <div>
-                            <label for="keywords" class="block text-sm font-medium text-gray-700 mb-2">
-                                Keywords
-                            </label>
-                            <input
-                                type="text"
-                                id="keywords"
-                                name="keywords"
-                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow"
-                                placeholder="e.g., creative, design"
-                            >
-                        </div>
+                        <input type="text" name="professions" placeholder="Professions" class="px-4 py-3 border rounded-lg">
+                        <input type="text" name="countries" placeholder="Countries" class="px-4 py-3 border rounded-lg">
+                        <input type="text" name="keywords" placeholder="Keywords" class="px-4 py-3 border rounded-lg">
                     </div>
-                    <p class="mt-3 text-xs text-gray-500">Filters help target specific user segments. Leave blank to target all scraped users.</p>
+                </div>
+
+                <div>
+                    <label for="schedule_time" class="block text-sm font-medium text-gray-700 mb-2">Schedule Time</label>
+                    <input type="datetime-local" id="schedule_time" name="schedule_time" class="w-full px-4 py-3 border rounded-lg">
+                    <p class="text-xs text-gray-500 mt-2">Leave blank = run now</p>
                 </div>
             </div>
 
-            <!-- Info Box -->
-            <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                <div class="flex items-start">
-                    <svg class="w-5 h-5 text-purple-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                    </svg>
-                    <div>
-                        <h3 class="text-sm font-medium text-purple-900">Campaign Best Practices</h3>
-                        <ul class="mt-2 text-sm text-purple-700 space-y-1 list-disc list-inside">
-                            <li>Use warm accounts with high health scores for better results</li>
-                            <li>Apply filters for campaign mode or upload a CSV with specific messages</li>
-                            <li>Monitor campaign performance and adjust as needed</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Action Buttons -->
-            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
-                <a href="{% url 'status' %}" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                    </svg>
-                    Cancel
-                </a>
-                <button type="submit" class="inline-flex items-center px-6 py-2 bg-gradient-to-r from-primary to-secondary text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all shadow-sm font-medium">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
+            <div class="flex justify-between pt-6 border-t">
+                <a href="{% url 'status' %}" class="px-6 py-3 border rounded-lg text-gray-700 hover:bg-gray-50">Cancel</a>
+                <button type="submit" class="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg font-medium hover:from-indigo-700 hover:to-purple-700 shadow-lg">
                     Launch Campaign
                 </button>
             </div>
         </form>
         {% endif %}
+
+        <!-- Fallback Section -->
+        <div class="mt-8 p-6 bg-orange-50 border-2 border-orange-300 rounded-xl">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-orange-900">DeepSeek AI Failed?</h3>
+                    <p class="text-sm text-orange-700">We'll use your fallback message instead</p>
+                </div>
+                <button type="button" onclick="document.getElementById('fallbackModal').classList.remove('hidden')"
+                        class="px-6 py-3 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-700 shadow">
+                    Configure Fallback
+                </button>
+            </div>
+
+            <div class="bg-white rounded-lg p-6 border-2 {% if active_fallback %}border-green-500 shadow-lg{% else %}border-red-400{% endif %}">
+                {% if active_fallback %}
+                    <p class="text-sm font-medium text-gray-700">Active Fallback Message:</p>
+                    <p class="text-2xl font-bold text-green-700 mt-3 leading-relaxed">"{{ active_fallback.message }}"</p>
+                    <p class="text-sm text-gray-600 mt-2">→ {{ active_fallback.name }}</p>
+                {% else %}
+                    <p class="text-xl font-bold text-red-600">No Active Fallback!</p>
+                    <p class="text-sm text-gray-600 mt-2">Click above to create one</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- FULL CRUD FALLBACK MODAL -->
+    <div id="fallbackModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-screen overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center z-10">
+                <h2 class="text-2xl font-bold text-gray-900">Fallback DM Messages</h2>
+                <button onclick="document.getElementById('fallbackModal').classList.add('hidden')" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="p-8 space-y-8">
+                <!-- Create New -->
+                <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-8 border-2 border-indigo-300">
+                    <h3 class="text-2xl font-bold text-indigo-900 mb-6">Add New Fallback Message</h3>
+                    <form method="post" action="{% url 'manage_fallbacks' %}" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="create">
+                        <input type="text" name="name" placeholder="Name (e.g. Warm & Friendly)" required class="px-5 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+                        <input type="text" name="message" placeholder="Your fallback DM..." required maxlength="280" class="px-5 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+                        <button type="submit" class="bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 shadow">
+                            Save & Activate
+                        </button>
+                    </form>
+                    <p class="text-xs text-indigo-700 mt-3">This will automatically deactivate the current active message</p>
+                </div>
+
+                <!-- List with Pagination -->
+                <div>
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-bold">All Messages ({{ fallback_messages.paginator.count }})</h3>
+                    </div>
+
+                    <div class="space-y-4">
+                        {% for fb in fallback_messages %}
+                        <div class="bg-white rounded-xl border-2 {% if fb.is_active %}border-green-500 shadow-lg bg-green-50{% else %}border-gray-300{% endif %} p-6">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-3">
+                                        <h4 class="text-lg font-bold text-gray-900">{{ fb.name }}</h4>
+                                        {% if fb.is_active %}
+                                        <span class="px-4 py-1 bg-green-600 text-white text-xs font-bold rounded-full">ACTIVE</span>
+                                        {% endif %}
+                                    </div>
+                                    <p class="text-xl mt-3 text-gray-800 leading-relaxed">"{{ fb.message }}"</p>
+                                    <p class="text-xs text-gray-500 mt-3">Created: {{ fb.created_at|date:"M d, Y H:i" }}</p>
+                                </div>
+
+                                <div class="flex gap-3 ml-6">
+                                    {% if not fb.is_active %}
+                                    <form method="post" action="{% url 'manage_fallbacks' %}" class="inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="activate">
+                                        <input type="hidden" name="fallback_id" value="{{ fb.id }}">
+                                        <button type="submit" class="text-green-600 hover:text-green-800 font-medium text-sm">Set Active</button>
+                                    </form>
+                                    {% endif %}
+
+                                    <button onclick="editFallback({{ fb.id }}, '{{ fb.name|escapejs }}', '{{ fb.message|escapejs }}')"
+                                            class="text-blue-600 hover:text-blue-800 font-medium text-sm">Edit</button>
+
+                                    <form method="post" action="{% url 'manage_fallbacks' %}"
+                                          onsubmit="return confirm('Delete {{ fb.name|escapejs }}?')" class="inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="fallback_id" value="{{ fb.id }}">
+                                        <button type="submit" class="text-red-600 hover:text-red-800 font-medium text-sm">Delete</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <p class="text-center text-gray-500 py-16 text-lg">No fallback messages yet</p>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Pagination -->
+                    {% if fallback_messages.has_other_pages %}
+                    <div class="flex justify-center gap-4 mt-10 pt-6 border-t">
+                        {% if fallback_messages.has_previous %}
+                        <a href="?fallback_page={{ fallback_messages.previous_page_number }}"
+                           class="px-6 py-3 bg-white border-2 border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50 font-medium">
+                            Previous
+                        </a>
+                        {% endif %}
+
+                        <span class="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium shadow">
+                            Page {{ fallback_messages.number }} of {{ fallback_messages.paginator.num_pages }}
+                        </span>
+
+                        {% if fallback_messages.has_next %}
+                        <a href="?fallback_page={{ fallback_messages.next_page_number }}"
+                           class="px-6 py-3 bg-white border-2 border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50 font-medium">
+                            Next
+                        </a>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="editModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
+            <h3 class="text-2xl font-bold mb-6">Edit Fallback Message</h3>
+            <form method="post" action="{% url 'manage_fallbacks' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update">
+                <input type="hidden" name="fallback_id" id="edit_id">
+                <div class="space-y-5">
+                    <input type="text" name="name" id="edit_name" required placeholder="Name" class="w-full px-5 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+                    <textarea name="message" id="edit_message" required maxlength="280" rows="5" placeholder="Your message..." class="w-full px-5 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <div class="flex justify-end gap-4">
+                        <button type="button" onclick="document.getElementById('editModal').classList.add('hidden')"
+                                class="px-6 py-3 border rounded-lg hover:bg-gray-50 font-medium">Cancel</button>
+                        <button type="submit" class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shadow">Save Changes</button>
+                    </div>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Quick Stats -->
     {% if templates %}
-    <div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-            <div class="flex items-center">
-                <div class="bg-blue-100 rounded-lg p-3 mr-3">
-                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500">Templates</p>
-                    <p class="text-lg font-semibold text-gray-900">{{ templates|length }}</p>
-                </div>
-            </div>
+    <div class="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div class="bg-white rounded-lg border p-6 text-center">
+            <p class="text-3xl font-bold text-indigo-600">{{ templates|length }}</p>
+            <p class="text-sm text-gray-600">Templates</p>
         </div>
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-            <div class="flex items-center">
-                <div class="bg-green-100 rounded-lg p-3 mr-3">
-                    <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500">Ready Accounts</p>
-                    <p class="text-lg font-semibold text-gray-900">{{ accounts|length }}</p>
-                </div>
-            </div>
+        <div class="bg-white rounded-lg border p-6 text-center">
+            <p class="text-3xl font-bold text-green-600">{{ accounts|length }}</p>
+            <p class="text-sm text-gray-600">Ready Accounts</p>
         </div>
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-            <div class="flex items-center">
-                <div class="bg-purple-100 rounded-lg p-3 mr-3">
-                    <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500">Avg Health</p>
-                    <p class="text-lg font-semibold text-gray-900">{% widthratio accounts|length 1 1 %}%</p>
-                </div>
-            </div>
+        <div class="bg-white rounded-lg border p-6 text-center">
+            <p class="text-3xl font-bold text-purple-600">98%</p>
+            <p class="text-sm text-gray-600">Avg Health</p>
         </div>
     </div>
     {% endif %}
 </div>
 
 <script>
-    function toggleFormFields(mode) {
-        const campaignFields = document.getElementById('campaign-fields');
-        if (mode === 'csv') {
-            campaignFields.classList.add('hidden');
-            document.getElementById('name').removeAttribute('required');
-            document.getElementById('template_id').removeAttribute('required');
-            document.getElementById('accounts').removeAttribute('required');
-        } else {
-            campaignFields.classList.remove('hidden');
-            document.getElementById('name').setAttribute('required', '');
-            document.getElementById('template_id').setAttribute('required', '');
-            document.getElementById('accounts').setAttribute('required', '');
-        }
+function toggleFormFields(mode) {
+    const fields = document.getElementById('campaign-fields');
+    const inputs = ['name', 'template_id', 'accounts'];
+    if (mode === 'csv') {
+        fields.classList.add('hidden');
+        inputs.forEach(id => document.getElementById(id)?.removeAttribute('required'));
+    } else {
+        fields.classList.remove('hidden');
+        inputs.forEach(id => document.getElementById(id)?.setAttribute('required', ''));
     }
+}
+
+function editFallback(id, name, message) {
+    document.getElementById('edit_id').value = id;
+    document.getElementById('edit_name').value = name;
+    document.getElementById('edit_message').value = message;
+    document.getElementById('editModal').classList.remove('hidden');
+}
 </script>
 {% endblock %}
