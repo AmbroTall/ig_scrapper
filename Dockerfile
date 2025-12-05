@@ -47,9 +47,9 @@ COPY --from=builder /root/.local /home/django/.local
 COPY --chown=django:django . .
 
 # Create directories for static/media files
-RUN mkdir -p /app/staticfiles /app/mediafiles /app/sessions && \
-    chown -R django:django /app
-
+#RUN mkdir -p /app/staticfiles /app/mediafiles /app/sessions && \
+#    chown -R django:django /app
+RUN mkdir -p /app/sessions
 # Switch to non-root user
 USER django
 

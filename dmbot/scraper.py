@@ -528,13 +528,13 @@ class InstagramScraper:
                 saved_count = self.store_users_enhanced(usernames_to_save, account, source_type, source_value)
 
                 # Update counters
-                account.users_scraped_today += saved_count
-                account.save()
-
-                daily_metric.scraped_count += saved_count
-                if daily_metric.scraped_count >= daily_metric.scraping_threshold:
-                    daily_metric.scraping_limit_reached = True
-                daily_metric.save()
+                # account.users_scraped_today += saved_count
+                # account.save()
+                #
+                # daily_metric.scraped_count += saved_count
+                # if daily_metric.scraped_count >= daily_metric.scraping_threshold:
+                #     daily_metric.scraping_limit_reached = True
+                # daily_metric.save()
 
                 self.logger.info(
                     f"Saved batch of {saved_count} users. "

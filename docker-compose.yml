@@ -14,6 +14,7 @@ services:
       - .:/app
       - static_volume:/app/staticfiles
       - media_volume:/app/mediafiles
+      - sessions_volume:/app/sessions    # ← ADD
     ports:
       - "8004:8000"
     env_file:
@@ -46,6 +47,7 @@ services:
     volumes:
       - .:/app
       - media_volume:/app/mediafiles
+      - sessions_volume:/app/sessions    # ← ADD (critical!)
     env_file:
       - .env
     environment:
@@ -74,6 +76,7 @@ services:
     command: celery -A app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/app
+      - sessions_volume:/app/sessions    # ← optional, but safe
     env_file:
       - .env
     environment:
@@ -159,6 +162,7 @@ volumes:
       device: ./data/redis
   static_volume:
   media_volume:
+  sessions_volume:
 
 networks:
   app-network:

@@ -87,9 +87,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = True
 USE_TZ = True
+TIME_ZONE = 'Asia/Dubai'
+USE_I18N = True
 
 # Static files
 STATIC_URL = os.getenv('STATIC_URL', '/static/')
@@ -142,6 +142,11 @@ CELERY_BEAT_SCHEDULE = {
     },
     'reset_stale_accounts': {
         'task': 'dmbot.tasks.reset_stale_accounts_task',
+        'schedule': 300,  # 5 minutes in seconds
+    },
+
+    'enforce_daily_scraping_limit': {
+        'task': 'dmbot.tasks.enforce_daily_scraping_limit',
         'schedule': 300,  # 5 minutes in seconds
     },
 

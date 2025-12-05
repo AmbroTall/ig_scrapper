@@ -32,7 +32,7 @@ class DMSender:
             if not cache.get(cache_key):
                 send_alert("Empty bio, using raw template", "info")
                 cache.set(cache_key, True, timeout=60)
-            return template
+            return self.get_fallback_message()
         cache_key = f"dm_{hash(bio)}_{hash(template)}"
         cached_dm = cache.get(cache_key)
         if cached_dm:

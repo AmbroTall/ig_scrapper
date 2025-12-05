@@ -656,10 +656,9 @@ PROXY_PASSWORD = "3DDQ6eQd4OK8Xx2EZQYW"
 def get_fresh_proxy_session():
     session_id = str(uuid.uuid4())[:8]
     proxy_user = f"{PROXY_USER_BASE}_session_{session_id}"
-    proxy_url = f"http://{proxy_user}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
-    proxy_url = f"http://core-residential.evomi.com:1000:robertthom3:3DDQ6eQd4OK8Xx2EZQYW"
+    proxy_url = f"http://{PROXY_USER_BASE}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
+    # proxy_url = f"http://core-residential.evomi.com:1000:robertthom3:3DDQ6eQd4OK8Xx2EZQYW"
     return {"http": proxy_url, "https": proxy_url}
-
 
 @shared_task(bind=True, max_retries=10, default_retry_delay=60, rate_limit="2000/h")
 def enrich_user_details_task(self):
