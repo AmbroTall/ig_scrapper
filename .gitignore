@@ -6,6 +6,6 @@ db.sqlite3
 app:
 results:
 transport:
-.env
+migrations
 nginx.conf
 data

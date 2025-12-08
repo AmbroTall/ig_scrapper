@@ -87,47 +87,63 @@
             </table>
         </div>
         <!-- Pagination -->
-        {% if messages.paginator.num_pages > 1 %}
-        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
-            <div class="flex items-center justify-between">
-                <div class="text-sm text-gray-700">
-                    Page <span class="font-semibold">{{ messages.number }}</span> of <span class="font-semibold">{{ messages.paginator.num_pages }}</span>
-                </div>
-                <nav class="flex items-center space-x-2">
-                    {% if messages.has_previous %}
-                    <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        First
-                    </a>
-                    <a href="?page={{ messages.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Previous
-                    </a>
-                    {% else %}
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        First
-                    </span>
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Previous
-                    </span>
-                    {% endif %}
-                    {% if messages.has_next %}
-                    <a href="?page={{ messages.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Next
-                    </a>
-                    <a href="?page={{ messages.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                        Last
-                    </a>
-                    {% else %}
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Next
-                    </span>
-                    <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
-                        Last
-                    </span>
-                    {% endif %}
-                </nav>
-            </div>
+        <!-- Pagination -->
+{% if messages.paginator.num_pages > 1 %}
+<div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+    <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-700">
+            Page <span class="font-semibold">{{ messages.number }}</span> of <span class="font-semibold">{{ messages.paginator.num_pages }}</span>
         </div>
-        {% endif %}
+        <nav class="flex items-center space-x-2">
+            {% if messages.has_previous %}
+            <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                First
+            </a>
+            <a href="?page={{ messages.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                Previous
+            </a>
+            {% else %}
+            <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                First
+            </span>
+            <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                Previous
+            </span>
+            {% endif %}
+
+            <!-- Page Numbers -->
+            {% for num in messages.paginator.page_range %}
+                {% if messages.number == num %}
+                    <span class="px-3 py-2 text-sm font-medium text-white bg-indigo-600 border border-indigo-600 rounded-lg">{{ num }}</span>
+                {% elif num > messages.number|add:'-3' and num < messages.number|add:'3' %}
+                    <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">{{ num }}</a>
+                {% elif num == 1 or num == messages.paginator.num_pages %}
+                    <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">{{ num }}</a>
+                {% elif num == messages.number|add:'-3' or num == messages.number|add:'3' %}
+                    <span class="px-3 py-2 text-sm font-medium text-gray-400">...</span>
+                {% endif %}
+            {% endfor %}
+
+            {% if messages.has_next %}
+            <a href="?page={{ messages.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                Next
+            </a>
+            <a href="?page={{ messages.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                Last
+            </a>
+            {% else %}
+            <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                Next
+            </span>
+            <span class="px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 border border-gray-300 rounded-lg cursor-not-allowed">
+                Last
+            </span>
+            {% endif %}
+        </nav>
+    </div>
+</div>
+{% endif %}
+
         {% else %}
         <div class="px-6 py-8 text-center">
             <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

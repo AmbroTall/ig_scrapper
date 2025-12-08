@@ -816,7 +816,6 @@ def warmup_accounts_task():
     except Exception as e:
         logging.error(f"Warmup task failed: {e}")
 
-
 @shared_task
 def health_check_task():
     try:

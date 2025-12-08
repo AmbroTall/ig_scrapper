@@ -180,23 +180,36 @@
             </table>
         </div>
 
-        <!-- Pagination -->
-        {% if accounts.has_other_pages %}
-        <div class="bg-gray-50 px-6 py-4 border-t flex flex-col sm:flex-row justify-between items-center text-sm text-gray-700">
-            <div>Showing {{ accounts.start_index }}–{{ accounts.end_index }} of {{ accounts.paginator.count }} accounts</div>
-            <div class="flex gap-2 mt-3 sm:mt-0">
-                {% if accounts.has_previous %}
-                <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">First</a>
-                <a href="?page={{ accounts.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Previous</a>
+      <!-- Pagination -->
+    {% if accounts.has_other_pages %}
+    <div class="bg-gray-50 px-6 py-4 border-t flex flex-col sm:flex-row justify-between items-center text-sm text-gray-700">
+        <div>Showing {{ accounts.start_index }}–{{ accounts.end_index }} of {{ accounts.paginator.count }} accounts</div>
+        <div class="flex gap-2 mt-3 sm:mt-0">
+            {% if accounts.has_previous %}
+            <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">First</a>
+            <a href="?page={{ accounts.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Previous</a>
+            {% endif %}
+
+            <!-- Page Numbers -->
+            {% for num in accounts.paginator.page_range %}
+                {% if accounts.number == num %}
+                    <span class="px-4 py-2 bg-indigo-600 text-white rounded">{{ num }}</span>
+                {% elif num > accounts.number|add:'-3' and num < accounts.number|add:'3' %}
+                    <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">{{ num }}</a>
+                {% elif num == 1 or num == accounts.paginator.num_pages %}
+                    <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">{{ num }}</a>
+                {% elif num == accounts.number|add:'-3' or num == accounts.number|add:'3' %}
+                    <span class="px-4 py-2">...</span>
                 {% endif %}
-                <span class="px-4 py-2 bg-indigo-600 text-white rounded">Page {{ accounts.number }}</span>
-                {% if accounts.has_next %}
-                <a href="?page={{ accounts.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Next</a>
-                <a href="?page={{ accounts.paginator.count }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Last</a>
-                {% endif %}
-            </div>
+            {% endfor %}
+
+            {% if accounts.has_next %}
+            <a href="?page={{ accounts.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Next</a>
+            <a href="?page={{ accounts.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}" class="px-4 py-2 border rounded hover:bg-white">Last</a>
+            {% endif %}
         </div>
-        {% endif %}
+    </div>
+    {% endif %}
     </div>
 </div>
 {% endblock %}
